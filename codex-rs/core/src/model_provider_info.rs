@@ -271,6 +271,7 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
+pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
 
 /// Built-in default provider list.
 pub fn built_in_model_providers(
@@ -279,12 +280,9 @@ pub fn built_in_model_providers(
     use ModelProviderInfo as P;
     let openai_provider = P::create_openai_provider(openai_base_url);
 
-    // We do not want to be in the business of adjucating which third-party
-    // providers are bundled with Codex CLI, so we only include the OpenAI and
-    // open source ("oss") providers by default. Users are encouraged to add to
-    // `model_providers` in config.toml to add their own providers.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
+        (OPENROUTER_PROVIDER_ID, create_openrouter_provider()),
         (
             OLLAMA_OSS_PROVIDER_ID,
             create_oss_provider(DEFAULT_OLLAMA_PORT, WireApi::Responses),
@@ -297,6 +295,27 @@ pub fn built_in_model_providers(
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect()
+}
+
+fn create_openrouter_provider() -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: "OpenRouter".into(),
+        base_url: Some("https://openrouter.ai/api/v1".into()),
+        env_key: Some("OPENROUTER_API_KEY".into()),
+        env_key_instructions: Some(
+            "Get an API key at https://openrouter.ai/keys and set OPENROUTER_API_KEY".into(),
+        ),
+        experimental_bearer_token: None,
+        wire_api: WireApi::Responses,
+        query_params: None,
+        http_headers: None,
+        env_http_headers: None,
+        request_max_retries: None,
+        stream_max_retries: None,
+        stream_idle_timeout_ms: None,
+        requires_openai_auth: false,
+        supports_websockets: false,
+    }
 }
 
 pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> ModelProviderInfo {

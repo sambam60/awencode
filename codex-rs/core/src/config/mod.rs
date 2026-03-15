@@ -48,6 +48,7 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use crate::model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use crate::model_provider_info::OPENAI_PROVIDER_ID;
+use crate::model_provider_info::OPENROUTER_PROVIDER_ID;
 use crate::model_provider_info::built_in_model_providers;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
@@ -140,8 +141,9 @@ pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 const OPENAI_BASE_URL_ENV_VAR: &str = "OPENAI_BASE_URL";
-const RESERVED_MODEL_PROVIDER_IDS: [&str; 3] = [
+const RESERVED_MODEL_PROVIDER_IDS: [&str; 4] = [
     OPENAI_PROVIDER_ID,
+    OPENROUTER_PROVIDER_ID,
     OLLAMA_OSS_PROVIDER_ID,
     LMSTUDIO_OSS_PROVIDER_ID,
 ];
@@ -2323,7 +2325,7 @@ impl Config {
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
-            .unwrap_or_else(|| "openai".to_string());
+            .unwrap_or_else(|| OPENROUTER_PROVIDER_ID.to_string());
         let model_provider = model_providers
             .get(&model_provider_id)
             .ok_or_else(|| {

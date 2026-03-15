@@ -1,3 +1,5 @@
-# Getting started with Codex CLI
+# Getting started with Awencode
 
-For an overview of Codex CLI features, see [this documentation](https://developers.openai.com/codex/cli/features#running-in-interactive-mode).
+Awencode is a lightweight agentic coding application. The backend is powered by the `codex-app-server`, a JSON-RPC server that exposes the agent engine over stdio and WebSocket.
+
+See [install.md](install.md) for build instructions.

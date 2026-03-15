@@ -5,23 +5,13 @@ set positional-arguments
 help:
     just -l
 
-# `codex`
-alias c := codex
-codex *args:
-    cargo run --bin codex -- "$@"
-
-# `codex exec`
-exec *args:
-    cargo run --bin codex -- exec "$@"
+# Run the app-server
+app-server *args:
+    cargo run --bin codex-app-server -- "$@"
 
 # Run the CLI version of the file-search crate.
 file-search *args:
     cargo run --bin codex-file-search -- "$@"
-
-# Build the CLI and run the app-server test client
-app-server-test-client *args:
-    cargo build -p codex-cli
-    cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex "$@"
 
 # format code
 fmt:
@@ -45,30 +35,6 @@ install:
 # only when you specifically need full feature coverage.
 test:
     cargo nextest run --no-fail-fast
-
-# Build and run Codex from source using Bazel.
-# Note we have to use the combination of `[no-cd]` and `--run_under="cd $PWD &&"`
-# to ensure that Bazel runs the command in the current working directory.
-[no-cd]
-bazel-codex *args:
-    bazel run //codex-rs/cli:codex --run_under="cd $PWD &&" -- "$@"
-
-[no-cd]
-bazel-lock-update:
-    bazel mod deps --lockfile_mode=update
-
-[no-cd]
-bazel-lock-check:
-    ./scripts/check-module-bazel-lock.sh
-
-bazel-test:
-    bazel test //... --keep_going
-
-bazel-remote-test:
-    bazel test //... --config=remote --platforms=//:rbe --keep_going
-
-build-for-release:
-    bazel build //codex-rs/cli:release_binaries --config=remote
 
 # Run the MCP server
 mcp-server-run *args:

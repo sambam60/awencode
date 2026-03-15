@@ -1,8 +1,11 @@
-# External (non-OpenAI) Pull Request Requirements
+## What
 
-Before opening this Pull Request, please read the dedicated "Contributing" markdown file or your PR may be closed:
-https://github.com/openai/codex/blob/main/docs/contributing.md
+<!-- What does this PR do? -->
 
-If your PR conforms to our contribution guidelines, replace this text with a detailed and high quality description of your changes.
+## Why
 
-Include a link to a bug report or enhancement request.
+<!-- Why is this change needed? -->
+
+## How
+
+<!-- How was this implemented? Any trade-offs or alternatives considered? -->
