@@ -104,7 +104,8 @@ impl Provider {
 }
 
 pub fn is_azure_responses_wire_base_url(name: &str, base_url: Option<&str>) -> bool {
-    if name.eq_ignore_ascii_case("azure") {
+    let lower_name = name.to_ascii_lowercase();
+    if lower_name == "azure" || lower_name.starts_with("azure ") {
         return true;
     }
 
@@ -151,6 +152,10 @@ mod tests {
 
         assert!(is_azure_responses_wire_base_url(
             "Azure",
+            Some("https://example.com")
+        ));
+        assert!(is_azure_responses_wire_base_url(
+            "Azure OpenAI",
             Some("https://example.com")
         ));
 

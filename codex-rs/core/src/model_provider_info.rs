@@ -272,6 +272,7 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
+pub const AZURE_OPENAI_PROVIDER_ID: &str = "azure-openai";
 
 /// Built-in default provider list.
 pub fn built_in_model_providers(
@@ -283,6 +284,7 @@ pub fn built_in_model_providers(
     [
         (OPENAI_PROVIDER_ID, openai_provider),
         (OPENROUTER_PROVIDER_ID, create_openrouter_provider()),
+        (AZURE_OPENAI_PROVIDER_ID, create_azure_openai_provider()),
         (
             OLLAMA_OSS_PROVIDER_ID,
             create_oss_provider(DEFAULT_OLLAMA_PORT, WireApi::Responses),
@@ -308,6 +310,35 @@ fn create_openrouter_provider() -> ModelProviderInfo {
         experimental_bearer_token: None,
         wire_api: WireApi::Responses,
         query_params: None,
+        http_headers: None,
+        env_http_headers: None,
+        request_max_retries: None,
+        stream_max_retries: None,
+        stream_idle_timeout_ms: None,
+        requires_openai_auth: false,
+        supports_websockets: false,
+    }
+}
+
+fn create_azure_openai_provider() -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: "Azure OpenAI".into(),
+        // Users must override base_url in config.toml with their deployment endpoint, e.g.:
+        // https://{resource}.openai.azure.com/openai/deployments/{deployment}
+        base_url: None,
+        env_key: Some("AZURE_OPENAI_API_KEY".into()),
+        env_key_instructions: Some(
+            "Set AZURE_OPENAI_API_KEY and configure base_url in config.toml to \
+             https://<resource>.openai.azure.com/openai/deployments/<deployment>"
+                .into(),
+        ),
+        experimental_bearer_token: None,
+        wire_api: WireApi::Responses,
+        query_params: Some(
+            [("api-version".to_string(), "2025-03-01-preview".to_string())]
+                .into_iter()
+                .collect(),
+        ),
         http_headers: None,
         env_http_headers: None,
         request_max_retries: None,
