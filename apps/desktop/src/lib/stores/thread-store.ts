@@ -5,6 +5,8 @@ export type AgentStatus = "queued" | "active" | "review" | "deployed";
 export interface AgentMessage {
   role: "you" | "agent";
   content: string;
+  /** Image data URLs attached to this message (user messages only). */
+  imageUrls?: string[];
 }
 
 export interface Agent {

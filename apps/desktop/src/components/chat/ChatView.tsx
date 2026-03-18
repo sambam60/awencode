@@ -13,7 +13,7 @@ import {
   ArrowUpDown,
   MessageSquare,
 } from "lucide-react";
-import { ComposeArea } from "./ComposeArea";
+import { ComposeArea, type Attachment } from "./ComposeArea";
 import { statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -21,7 +21,7 @@ import { rpcRequest } from "@/lib/rpc-client";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
-import { getSelectedModel } from "@/lib/stores/settings-store";
+import { getSelectedModel, getSelectedReasoningEffort } from "@/lib/stores/settings-store";
 import type { Agent, AgentMessage } from "@/lib/stores/thread-store";
 
 interface ChatViewProps {
@@ -66,8 +66,24 @@ function MessageRow({ message }: { message: AgentMessage }) {
   if (isUser) {
     return (
       <div className="flex justify-end mb-4">
-        <div className="max-w-[80%] px-4 py-3 bg-text-primary text-bg-card rounded-xl rounded-br-sm text-[13px] leading-relaxed">
-          {message.content}
+        <div className="max-w-[80%] flex flex-col gap-2 items-end">
+          {message.imageUrls && message.imageUrls.length > 0 && (
+            <div className="flex flex-wrap gap-2 justify-end">
+              {message.imageUrls.map((url, i) => (
+                <img
+                  key={i}
+                  src={url}
+                  alt=""
+                  className="max-w-[200px] max-h-[200px] rounded-lg object-cover border border-border-light"
+                />
+              ))}
+            </div>
+          )}
+          {message.content && (
+            <div className="px-4 py-3 bg-text-primary text-bg-card rounded-xl rounded-br-sm text-[13px] leading-relaxed">
+              {message.content}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -378,11 +394,19 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     }
   }, [agent.messages.length, agent.streamingBuffer]);
 
-  const handleSend = async (message: string) => {
+  const handleSend = async (message: string, attachments: Attachment[]) => {
     const trimmed = message.trim();
-    if (!trimmed) return;
+    if (!trimmed && attachments.length === 0) return;
 
-    appendAgentMessage(agent.id, { role: "you", content: trimmed });
+    const displayContent = trimmed || (attachments.length > 0 ? `[${attachments.map((a) => a.name).join(", ")}]` : "");
+    const imageUrls = attachments
+      .filter((a) => a.mime?.startsWith("image/") && a.dataUrl)
+      .map((a) => a.dataUrl as string);
+    appendAgentMessage(agent.id, {
+      role: "you",
+      content: displayContent,
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    });
 
     let threadId = agent.codexThreadId;
     if (!threadId) {
@@ -404,10 +428,34 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     }
     if (!threadId) return;
 
+    // Build input items: images as image_url content, files as text references, then the text
+    const inputItems: Array<Record<string, unknown>> = [];
+
+    for (const att of attachments) {
+      if (att.mime?.startsWith("image/") && att.dataUrl) {
+        inputItems.push({
+          type: "input_image",
+          image_url: att.dataUrl,
+        });
+      } else {
+        // Non-image files: reference by path as a text item
+        inputItems.push({
+          type: "text",
+          text: `[File: ${att.name}]`,
+          textElements: [],
+        });
+      }
+    }
+
+    if (trimmed) {
+      inputItems.push({ type: "text", text: trimmed, textElements: [] });
+    }
+
     try {
       await rpcRequest("turn/start", {
         threadId,
-        input: [{ type: "text", text: trimmed, textElements: [] }],
+        input: inputItems,
+        effort: getSelectedReasoningEffort(),
       });
     } catch (e) {
       console.error("turn/start failed", e);
@@ -565,7 +613,10 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       {/* Compose */}
       <div className="max-w-[680px] mx-auto w-full px-6 pb-4 shrink-0">
         {canCompose ? (
-          <ComposeArea onSend={handleSend} emptyThread={agent.messages.length === 0} />
+          <ComposeArea
+            onSend={handleSend}
+            emptyThread={agent.messages.length === 0 && !agent.streamingBuffer}
+          />
         ) : (
           <div className="border border-border-light rounded-lg px-4 py-3 text-center">
             <span className="font-mono text-[10.5px] text-text-faint">

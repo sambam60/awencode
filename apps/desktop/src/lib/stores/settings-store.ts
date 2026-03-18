@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 
 export type ModelProviderId = "openai" | "openrouter" | "azure-openai";
 
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
 export interface CuratedModelOption {
   id: string;
   provider: ModelProviderId;
@@ -99,6 +101,8 @@ interface SettingsState {
 
   /** Selected model (must be enabled; store enforces this). */
   selectedModelId: string;
+  /** Reasoning effort for turn/start (low|medium|high). */
+  selectedReasoningEffort: ReasoningEffort;
   /** Enabled models shown as “available” in the UI. */
   enabledModels: Record<string, boolean>;
 
@@ -107,11 +111,13 @@ interface SettingsState {
   setAzureBaseUrl: (value: string) => void;
   setAzureDeploymentName: (value: string) => void;
   setSelectedModelId: (id: string) => void;
+  setSelectedReasoningEffort: (effort: ReasoningEffort) => void;
   setModelEnabled: (id: string, enabled: boolean) => void;
   ensureDefaults: () => void;
 }
 
 const DEFAULT_SELECTED_MODEL = "gpt-5.3-codex";
+const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 
 function defaultEnabledModels(): Record<string, boolean> {
   return CURATED_MODELS.reduce((acc, m) => {
@@ -134,6 +140,7 @@ export const useSettingsStore = create<SettingsState>()(
       azureDeploymentName: "",
 
       selectedModelId: DEFAULT_SELECTED_MODEL,
+      selectedReasoningEffort: DEFAULT_REASONING_EFFORT,
       enabledModels: defaultEnabledModels(),
 
       setOpenRouterApiKey: (value) => set({ openRouterApiKey: value }),
@@ -148,6 +155,8 @@ export const useSettingsStore = create<SettingsState>()(
         }
         set({ selectedModelId: id });
       },
+
+      setSelectedReasoningEffort: (effort) => set({ selectedReasoningEffort: effort }),
 
       setModelEnabled: (id, enabled) => {
         const nextEnabled = { ...get().enabledModels, [id]: enabled };
@@ -176,6 +185,7 @@ export const useSettingsStore = create<SettingsState>()(
         azureBaseUrl: s.azureBaseUrl,
         azureDeploymentName: s.azureDeploymentName,
         selectedModelId: s.selectedModelId,
+        selectedReasoningEffort: s.selectedReasoningEffort,
         enabledModels: s.enabledModels,
       }),
     },
@@ -188,5 +198,10 @@ export function getSelectedModel(): CuratedModelOption {
     CURATED_MODELS.find((m) => m.id === selectedModelId) ??
     CURATED_MODELS[0]
   );
+}
+
+export function getSelectedReasoningEffort(): ReasoningEffort {
+  const { selectedReasoningEffort } = useSettingsStore.getState();
+  return selectedReasoningEffort ?? DEFAULT_REASONING_EFFORT;
 }
 

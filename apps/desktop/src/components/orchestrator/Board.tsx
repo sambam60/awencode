@@ -5,7 +5,6 @@ import { CommandBar } from "../command/CommandBar";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
-import { MOCK_AGENTS } from "@/lib/mock-data";
 import { STATUS_CONFIG } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
@@ -15,18 +14,11 @@ export function Orchestrator() {
   const agents = useThreadStore((s) => s.agents);
   const selectedId = useThreadStore((s) => s.selectedAgentId);
   const selectAgent = useThreadStore((s) => s.selectAgent);
-  const setAgents = useThreadStore((s) => s.setAgents);
   const addAgent = useThreadStore((s) => s.addAgent);
   const setCommandBarOpen = useAppStore((s) => s.setCommandBarOpen);
   const projectName = useAppStore((s) => s.projectName);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-
-  useEffect(() => {
-    if (agents.length === 0) {
-      setAgents(MOCK_AGENTS);
-    }
-  }, [agents.length, setAgents]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
