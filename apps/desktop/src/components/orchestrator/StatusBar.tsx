@@ -1,5 +1,6 @@
 import type { Agent } from "@/lib/stores/thread-store";
 import { useAppStore } from "@/lib/stores/app-store";
+import { useViewStore } from "@/lib/stores/view-store";
 
 interface StatusBarProps {
   agents: Agent[];
@@ -10,6 +11,7 @@ export function StatusBar({ agents, onOpenSettings }: StatusBarProps) {
   const setCommandBarOpen = useAppStore((s) => s.setCommandBarOpen);
   const theme = useAppStore((s) => s.theme);
   const toggleTheme = useAppStore((s) => s.toggleTheme);
+  const view = useViewStore((s) => s.view);
   const active = agents.filter((a) => a.status === "active").length;
   const review = agents.filter((a) => a.status === "review").length;
   const blocked = agents.filter((a) => a.blocked).length;
@@ -66,9 +68,11 @@ export function StatusBar({ agents, onOpenSettings }: StatusBarProps) {
               className="p-2 rounded cursor-pointer text-text-faint hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
               title="Settings"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
+              <img
+                src={view === "settings" ? "/gear_filled.svg" : "/gear.svg"}
+                alt=""
+                className="h-3.5 w-3.5 shrink-0 opacity-85 dark:invert"
+              />
             </button>
           )}
         </div>

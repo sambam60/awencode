@@ -1,13 +1,18 @@
 import { useAppStore } from "./lib/stores/app-store";
 import { useViewStore } from "./lib/stores/view-store";
 import { useThreadStore } from "./lib/stores/thread-store";
+import { useCodexNotifications } from "./hooks/useCodexNotifications";
 import { Orchestrator } from "./components/orchestrator/Board";
 import { ChatView } from "./components/chat/ChatView";
 import { SettingsView } from "./components/settings/SettingsView";
 import { OnboardingFlow } from "./components/onboarding/OnboardingFlow";
 import { HomeScreen } from "./components/home/HomeScreen";
+import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useSettingsStore } from "./lib/stores/settings-store";
 
 export default function App() {
+  useCodexNotifications();
   const theme = useAppStore((s) => s.theme);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
@@ -15,6 +20,15 @@ export default function App() {
   const selectedId = useThreadStore((s) => s.selectedAgentId);
 
   const chatAgent = agents.find((a) => a.id === selectedId) ?? null;
+
+  useEffect(() => {
+    // Best-effort: ensure Codex picks up persisted API keys on app launch.
+    const { openRouterApiKey, azureApiKey } = useSettingsStore.getState();
+    invoke("codex_set_api_keys", {
+      openrouter_api_key: openRouterApiKey,
+      azure_api_key: azureApiKey,
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className={theme === "dark" ? "dark" : ""}>

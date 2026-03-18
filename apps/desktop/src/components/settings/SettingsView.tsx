@@ -1,13 +1,10 @@
-import { useState } from "react";
-import { ModelSelector } from "./ModelSelector";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/stores/app-store";
-
-const APPROVAL_MODES = [
-  { id: "auto", label: "Auto-approve", description: "Agent runs without interruption" },
-  { id: "suggest", label: "Suggest", description: "Agent suggests, you approve" },
-  { id: "manual", label: "Manual", description: "Full manual control" },
-];
+import { useViewStore } from "@/lib/stores/view-store";
+import { rpcRequest } from "@/lib/rpc-client";
+import { CURATED_MODELS, useSettingsStore } from "@/lib/stores/settings-store";
+import { invoke } from "@tauri-apps/api/core";
 
 const NAV_ITEMS = [
   { id: "general", label: "General" },
@@ -28,20 +25,43 @@ interface SettingsViewProps {
 
 export function SettingsView({ onBack }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState("general");
-  const [model, setModel] = useState("o4-mini");
-  const [approvalMode, setApprovalMode] = useState("suggest");
-  const [apiKey, setApiKey] = useState("");
   const theme = useAppStore((s) => s.theme);
   const toggleTheme = useAppStore((s) => s.toggleTheme);
+  const view = useViewStore((s) => s.view);
+  const setView = useViewStore((s) => s.setView);
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
-      {/* Blank draggable header — reserves space for traffic lights, avoids collision with Back to app */}
+      {/* Top bar — reserve space for macOS traffic lights */}
       <div
         data-tauri-drag-region
-        className="h-11 shrink-0 pl-[92px] pr-5 pt-1.5 border-b border-border-light"
-        aria-hidden
-      />
+        className="h-11 flex items-center justify-between pl-[92px] pr-5 pt-1.5 shrink-0 select-none border-b border-border-light"
+      >
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setView("home")}
+            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            title="Home"
+          >
+            <img
+              src={view === "home" ? "/house_icon_filled.svg" : "/house_icon.svg"}
+              alt=""
+              className="h-3 w-3 shrink-0 opacity-85 dark:invert"
+            />
+          </button>
+          <button
+            onClick={() => setView("settings")}
+            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            title="Settings"
+          >
+            <img
+              src={view === "settings" ? "/gear_filled.svg" : "/gear.svg"}
+              alt=""
+              className="h-3 w-3 shrink-0 opacity-85 dark:invert"
+            />
+          </button>
+        </div>
+      </div>
       <div className="flex flex-1 min-h-0">
         {/* Left sidebar */}
         <div className="w-[200px] shrink-0 border-r border-border-light flex flex-col bg-bg-secondary">
@@ -77,14 +97,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
         <div className="flex-1 overflow-y-auto">
           <div className="px-10 py-8 max-w-2xl">
             {activeSection === "general" && (
-              <GeneralSection
-                apiKey={apiKey}
-                setApiKey={setApiKey}
-                model={model}
-                setModel={setModel}
-                approvalMode={approvalMode}
-                setApprovalMode={setApprovalMode}
-              />
+              <GeneralSection />
             )}
             {activeSection === "appearance" && (
               <AppearanceSection theme={theme} toggleTheme={toggleTheme} />
@@ -125,7 +138,7 @@ function SettingsRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-8 py-4 border-b border-border-light last:border-b-0">
+    <div className="px-4 py-4 border-b border-border-light last:border-b-0 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium text-text-primary">{label}</div>
         {description && (
@@ -134,64 +147,267 @@ function SettingsRow({
           </div>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="w-full sm:w-auto sm:shrink-0">{children}</div>
     </div>
   );
 }
 
 function GeneralSection({
-  apiKey,
-  setApiKey,
-  model,
-  setModel,
-  approvalMode,
-  setApprovalMode,
-}: {
-  apiKey: string;
-  setApiKey: (v: string) => void;
-  model: string;
-  setModel: (v: string) => void;
-  approvalMode: string;
-  setApprovalMode: (v: string) => void;
-}) {
+}: {}) {
+  const openRouterApiKey = useSettingsStore((s) => s.openRouterApiKey);
+  const azureApiKey = useSettingsStore((s) => s.azureApiKey);
+  const azureBaseUrl = useSettingsStore((s) => s.azureBaseUrl);
+  const azureDeploymentName = useSettingsStore((s) => s.azureDeploymentName);
+  const setOpenRouterApiKey = useSettingsStore((s) => s.setOpenRouterApiKey);
+  const setAzureApiKey = useSettingsStore((s) => s.setAzureApiKey);
+  const setAzureBaseUrl = useSettingsStore((s) => s.setAzureBaseUrl);
+  const setAzureDeploymentName = useSettingsStore((s) => s.setAzureDeploymentName);
+  const selectedModelId = useSettingsStore((s) => s.selectedModelId);
+  const enabledModels = useSettingsStore((s) => s.enabledModels);
+  const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
+  const setModelEnabled = useSettingsStore((s) => s.setModelEnabled);
+  const ensureDefaults = useSettingsStore((s) => s.ensureDefaults);
+
+  const [draftOpenRouter, setDraftOpenRouter] = useState(openRouterApiKey);
+  const [draftAzure, setDraftAzure] = useState(azureApiKey);
+  const [draftAzureBaseUrl, setDraftAzureBaseUrl] = useState(azureBaseUrl);
+  const [draftAzureDeployment, setDraftAzureDeployment] = useState(azureDeploymentName);
+  const [applyStatus, setApplyStatus] = useState<"idle" | "applying" | "applied" | "error">("idle");
+
+  useEffect(() => {
+    ensureDefaults();
+  }, [ensureDefaults]);
+
+  useEffect(() => setDraftOpenRouter(openRouterApiKey), [openRouterApiKey]);
+  useEffect(() => setDraftAzure(azureApiKey), [azureApiKey]);
+  useEffect(() => setDraftAzureBaseUrl(azureBaseUrl), [azureBaseUrl]);
+  useEffect(() => setDraftAzureDeployment(azureDeploymentName), [azureDeploymentName]);
+
+  const hasKeyChanges =
+    draftOpenRouter !== openRouterApiKey ||
+    draftAzure !== azureApiKey ||
+    draftAzureBaseUrl !== azureBaseUrl ||
+    draftAzureDeployment !== azureDeploymentName;
+
+  const computeAzureDeploymentBaseUrl = () => {
+    const base = draftAzureBaseUrl.trim().replace(/\/+$/, "");
+    const deployment = draftAzureDeployment.trim();
+    if (!base || !deployment) return null;
+    if (base.includes("/deployments/")) return base;
+    return `${base}/deployments/${encodeURIComponent(deployment)}`;
+  };
+
+  const applyKeys = async () => {
+    setApplyStatus("applying");
+    try {
+      setOpenRouterApiKey(draftOpenRouter);
+      setAzureApiKey(draftAzure);
+      setAzureBaseUrl(draftAzureBaseUrl);
+      setAzureDeploymentName(draftAzureDeployment);
+
+      const azureDeploymentBaseUrl = computeAzureDeploymentBaseUrl();
+      if (azureDeploymentBaseUrl) {
+        await rpcRequest("config/batchWrite", {
+          edits: [
+            { keyPath: "model_providers.azure.name", value: "Azure", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure.base_url", value: azureDeploymentBaseUrl, mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure.env_key", value: "AZURE_OPENAI_API_KEY", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure.wire_api", value: "responses", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure.query_params.api-version", value: "2025-03-01-preview", mergeStrategy: "replace" },
+          ],
+          reloadUserConfig: true,
+        });
+      }
+
+      await invoke("codex_set_api_keys", {
+        openrouter_api_key: draftOpenRouter,
+        azure_api_key: draftAzure,
+      });
+      setApplyStatus("applied");
+      window.setTimeout(() => setApplyStatus("idle"), 1200);
+    } catch {
+      setApplyStatus("error");
+      window.setTimeout(() => setApplyStatus("idle"), 2500);
+    }
+  };
+
   return (
     <div>
       <SectionHeading title="General" />
 
       <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden mb-6">
-        <SettingsRow label="API Key" description="OpenAI API key for model access">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-[220px] px-3 py-1.5 bg-bg-input border border-border rounded text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-          />
-        </SettingsRow>
+        <div className="px-4 pt-4 pb-3">
+          <div className="label-mono">API Keys</div>
+        </div>
 
-        <SettingsRow label="Approval Mode" description="How the agent requests permission to act">
-          <div className="flex gap-1">
-            {["auto", "suggest", "manual"].map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setApprovalMode(mode)}
-                className={cn(
-                  "px-3 py-1.5 rounded text-[11.5px] font-mono uppercase tracking-wide transition-all duration-120 cursor-pointer",
-                  approvalMode === mode
-                    ? "bg-text-primary text-bg-card"
-                    : "bg-bg-secondary border border-border text-text-secondary hover:border-border-focus hover:text-text-primary",
-                )}
-              >
-                {mode}
-              </button>
-            ))}
+        <div className="px-4 pb-4">
+          <div className="grid gap-3">
+            {/* OpenRouter */}
+            <div className="border border-border-light rounded-lg overflow-hidden bg-bg-secondary/40">
+              <div className="px-4 py-3 border-b border-border-light">
+                <div className="text-[13px] font-medium text-text-primary">
+                  OpenRouter
+                </div>
+                <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
+                  Used for models routed through OpenRouter.
+                </div>
+              </div>
+              <div className="divide-y divide-border-light">
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    API key
+                  </span>
+                  <input
+                    type="password"
+                    value={draftOpenRouter}
+                    onChange={(e) => setDraftOpenRouter(e.target.value)}
+                    placeholder="or-..."
+                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Azure OpenAI */}
+            <div className="border border-border-light rounded-lg overflow-hidden bg-bg-secondary/40">
+              <div className="px-4 py-3 border-b border-border-light">
+                <div className="text-[13px] font-medium text-text-primary">
+                  Azure OpenAI
+                </div>
+                <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
+                  Configure Azure to use OpenAI models through your Azure account.
+                </div>
+              </div>
+              <div className="divide-y divide-border-light">
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    Base URL
+                  </span>
+                  <input
+                    type="url"
+                    value={draftAzureBaseUrl}
+                    onChange={(e) => setDraftAzureBaseUrl(e.target.value)}
+                    placeholder="https://<resource>.openai.azure.com/openai"
+                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    Deployment name
+                  </span>
+                  <input
+                    type="text"
+                    value={draftAzureDeployment}
+                    onChange={(e) => setDraftAzureDeployment(e.target.value)}
+                    placeholder="my-deployment"
+                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    API key
+                  </span>
+                  <input
+                    type="password"
+                    value={draftAzure}
+                    onChange={(e) => setDraftAzure(e.target.value)}
+                    placeholder="..."
+                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
-        </SettingsRow>
+        </div>
+
+        <div className="px-4 py-3 border-t border-border-light flex items-center justify-between gap-6">
+          <div className="text-[11.5px] text-text-tertiary leading-relaxed">
+            {applyStatus === "applied"
+              ? "Applied to Codex."
+              : applyStatus === "applying"
+                ? "Applying…"
+                : applyStatus === "error"
+                  ? "Couldn’t apply. Try again."
+                  : "Apply changes."}
+          </div>
+          <button
+            onClick={applyKeys}
+            disabled={!hasKeyChanges || applyStatus === "applying"}
+            className={cn(
+              "px-3 py-1.5 rounded-md text-[11.5px] font-medium transition-colors duration-120 cursor-pointer",
+              !hasKeyChanges || applyStatus === "applying"
+                ? "bg-bg-secondary text-text-faint border border-border-light cursor-default"
+                : "bg-text-primary text-bg-card hover:opacity-90",
+            )}
+          >
+            Apply
+          </button>
+        </div>
       </div>
 
       <div className="mb-2">
-        <div className="label-mono mb-3">Model</div>
-        <ModelSelector value={model} onChange={setModel} />
+        <div className="label-mono mb-3">Models</div>
+        <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden divide-y divide-border-light">
+          {CURATED_MODELS.map((m) => {
+            const enabled = enabledModels[m.id];
+            const selected = selectedModelId === m.id;
+            return (
+              <div
+                key={m.id}
+                className={cn(
+                  "px-4 py-3 flex items-center gap-3",
+                  enabled ? "cursor-pointer" : "opacity-70",
+                )}
+                onClick={() => {
+                  if (!enabled) setModelEnabled(m.id, true);
+                  setSelectedModelId(m.id);
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-medium text-text-primary">
+                      {m.name}
+                    </span>
+                    <span className="font-mono text-[9.5px] uppercase tracking-widest text-text-faint border border-border-light rounded px-1.5 py-0.5">
+                      {m.provider}
+                    </span>
+                    {selected && (
+                      <span className="text-accent-blue font-mono text-[11px]">
+                        ●
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-text-tertiary mt-0.5 truncate">
+                    {m.description}
+                  </div>
+                </div>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModelEnabled(m.id, !enabled);
+                  }}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors duration-150 shrink-0",
+                    enabled
+                      ? "bg-[var(--toggle-on)] border-[var(--toggle-on)]"
+                      : "bg-bg-secondary border-border",
+                  )}
+                  aria-label={`${enabled ? "Disable" : "Enable"} ${m.name}`}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-4 w-4 rounded-full bg-[var(--toggle-knob)] shadow-sm transition-transform duration-150",
+                      enabled ? "translate-x-[17px]" : "translate-x-[1px]",
+                    )}
+                  />
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -214,14 +430,14 @@ function AppearanceSection({
             className={cn(
               "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors duration-150 cursor-pointer",
               theme === "dark"
-                ? "bg-text-primary border-text-primary"
+                ? "bg-[var(--toggle-on)] border-[var(--toggle-on)]"
                 : "bg-bg-secondary border-border",
             )}
           >
             <span
               className={cn(
-                "inline-block h-3.5 w-3.5 rounded-full bg-bg-card shadow-sm transition-transform duration-150",
-                theme === "dark" ? "translate-x-4" : "translate-x-0.5",
+                "inline-block h-4 w-4 rounded-full bg-[var(--toggle-knob)] shadow-sm transition-transform duration-150",
+                theme === "dark" ? "translate-x-[17px]" : "translate-x-[1px]",
               )}
             />
           </button>
@@ -231,7 +447,604 @@ function AppearanceSection({
   );
 }
 
+interface McpServerEntry {
+  name: string;
+  tools?: Record<string, unknown>;
+  authStatus?: string;
+}
+
+type McpTransportType = "stdio" | "streamable_http";
+
+type KvRow = { key: string; value: string };
+
+type McpServerDraft =
+  | {
+      mode: "create";
+      name: string;
+      transport: McpTransportType;
+      command: string;
+      args: string[];
+      env: KvRow[];
+      envVars: string[];
+      cwd: string;
+      url: string;
+      bearerTokenEnvVar: string;
+      httpHeaders: KvRow[];
+      envHttpHeaders: KvRow[];
+    }
+  | {
+      mode: "edit";
+      name: string;
+      transport: McpTransportType;
+      command: string;
+      args: string[];
+      env: KvRow[];
+      envVars: string[];
+      cwd: string;
+      url: string;
+      bearerTokenEnvVar: string;
+      httpHeaders: KvRow[];
+      envHttpHeaders: KvRow[];
+    };
+
+function normalizeServerName(raw: string): string {
+  return raw.trim();
+}
+
+function parseCsvList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function rowsToRecord(rows: KvRow[]): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    const k = r.key.trim();
+    if (!k) continue;
+    out[k] = r.value ?? "";
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function ensureAtLeastOneRow(rows: KvRow[]): KvRow[] {
+  if (rows.length > 0) return rows;
+  return [{ key: "", value: "" }];
+}
+
+function buildEmptyDraft(mode: "create" | "edit", name = ""): McpServerDraft {
+  return {
+    mode,
+    name,
+    transport: "stdio",
+    command: "",
+    args: [],
+    env: [{ key: "", value: "" }],
+    envVars: [],
+    cwd: "",
+    url: "",
+    bearerTokenEnvVar: "",
+    httpHeaders: [{ key: "", value: "" }],
+    envHttpHeaders: [{ key: "", value: "" }],
+  };
+}
+
+async function readMcpServerConfigFromEffectiveConfig(
+  name: string,
+): Promise<Partial<McpServerDraft> | null> {
+  try {
+    const res = await rpcRequest<{ config?: Record<string, unknown> }>(
+      "config/read",
+      {},
+    );
+    const cfg = res?.config ?? {};
+    const mcpServers = (cfg as Record<string, unknown>)["mcp_servers"];
+    if (!mcpServers || typeof mcpServers !== "object") return null;
+    const server = (mcpServers as Record<string, unknown>)[name];
+    if (!server || typeof server !== "object") return null;
+
+    const obj = server as Record<string, unknown>;
+    const hasCommand = typeof obj.command === "string" && obj.command.length > 0;
+    const hasUrl = typeof obj.url === "string" && obj.url.length > 0;
+    const transport: McpTransportType = hasCommand
+      ? "stdio"
+      : hasUrl
+        ? "streamable_http"
+        : "stdio";
+
+    const args = Array.isArray(obj.args)
+      ? obj.args.filter((x): x is string => typeof x === "string")
+      : [];
+    const envObj =
+      obj.env && typeof obj.env === "object" ? (obj.env as Record<string, unknown>) : null;
+    const env: KvRow[] = envObj
+      ? Object.entries(envObj).map(([k, v]) => ({
+          key: k,
+          value: typeof v === "string" ? v : String(v ?? ""),
+        }))
+      : [];
+
+    const envVars = Array.isArray(obj.env_vars)
+      ? obj.env_vars.filter((x): x is string => typeof x === "string")
+      : Array.isArray(obj.envVars)
+        ? (obj.envVars as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+
+    const httpHeadersObj =
+      obj.http_headers && typeof obj.http_headers === "object"
+        ? (obj.http_headers as Record<string, unknown>)
+        : null;
+    const envHttpHeadersObj =
+      obj.env_http_headers && typeof obj.env_http_headers === "object"
+        ? (obj.env_http_headers as Record<string, unknown>)
+        : null;
+
+    return {
+      transport,
+      command: typeof obj.command === "string" ? obj.command : "",
+      args,
+      env: ensureAtLeastOneRow(env),
+      envVars,
+      cwd: typeof obj.cwd === "string" ? obj.cwd : "",
+      url: typeof obj.url === "string" ? obj.url : "",
+      bearerTokenEnvVar:
+        typeof obj.bearer_token_env_var === "string" ? obj.bearer_token_env_var : "",
+      httpHeaders: ensureAtLeastOneRow(
+        httpHeadersObj
+          ? Object.entries(httpHeadersObj).map(([k, v]) => ({
+              key: k,
+              value: typeof v === "string" ? v : String(v ?? ""),
+            }))
+          : [],
+      ),
+      envHttpHeaders: ensureAtLeastOneRow(
+        envHttpHeadersObj
+          ? Object.entries(envHttpHeadersObj).map(([k, v]) => ({
+              key: k,
+              value: typeof v === "string" ? v : String(v ?? ""),
+            }))
+          : [],
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function Segmented({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-border-light overflow-hidden bg-bg-secondary">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "px-3 py-1.5 text-[11.5px] font-medium transition-colors duration-120 cursor-pointer",
+              active
+                ? "bg-bg-card text-text-primary"
+                : "text-text-secondary hover:text-text-primary",
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function KvEditor({
+  rows,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+}: {
+  rows: KvRow[];
+  onChange: (next: KvRow[]) => void;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}) {
+  const normalized = ensureAtLeastOneRow(rows);
+  return (
+    <div className="grid gap-2">
+      {normalized.map((r, idx) => (
+        <div key={idx} className="flex items-center gap-2">
+          <input
+            value={r.key}
+            onChange={(e) => {
+              const next = normalized.slice();
+              next[idx] = { ...next[idx], key: e.target.value };
+              onChange(next);
+            }}
+            placeholder={keyPlaceholder ?? "Key"}
+            className="w-[200px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+          />
+          <input
+            value={r.value}
+            onChange={(e) => {
+              const next = normalized.slice();
+              next[idx] = { ...next[idx], value: e.target.value };
+              onChange(next);
+            }}
+            placeholder={valuePlaceholder ?? "Value"}
+            className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+          />
+          <button
+            onClick={() => {
+              const next = normalized.filter((_, i) => i !== idx);
+              onChange(ensureAtLeastOneRow(next));
+            }}
+            className="shrink-0 px-2 py-1.5 text-[11.5px] font-medium text-text-secondary border border-border rounded hover:border-border-focus hover:text-text-primary transition-all duration-120 cursor-pointer"
+            aria-label="Remove row"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          onClick={() => onChange([...normalized, { key: "", value: "" }])}
+          className="text-[11.5px] text-text-secondary hover:text-text-primary transition-colors duration-120 cursor-pointer"
+        >
+          + Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModalShell({
+  title,
+  description,
+  onClose,
+  children,
+}: {
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50">
+      <div
+        className="absolute inset-0 glass-backdrop"
+        onClick={onClose}
+        role="button"
+        aria-label="Close"
+      />
+      <div className="absolute inset-0 flex items-center justify-center p-6">
+        <div className="w-full max-w-[720px] rounded-[10px] border border-border-light glass-overlay overflow-hidden">
+          <div className="px-5 py-4 border-b border-border-light flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[14px] font-semibold text-text-primary tracking-tight">
+                {title}
+              </div>
+              {description && (
+                <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
+                  {description}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={onClose}
+              className="shrink-0 px-2 py-1 text-[11.5px] font-medium text-text-secondary border border-border rounded hover:border-border-focus hover:text-text-primary transition-all duration-120 cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+          <div className="px-5 py-5 max-h-[70vh] overflow-y-auto">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function McpServerModal({
+  draft,
+  setDraft,
+  onClose,
+  onSaved,
+}: {
+  draft: McpServerDraft;
+  setDraft: (next: McpServerDraft) => void;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [status, setStatus] = useState<
+    "idle" | "saving" | "saved" | "error" | "removing" | "removed"
+  >("idle");
+
+  const isCreate = draft.mode === "create";
+  const name = normalizeServerName(draft.name);
+
+  const canSave =
+    name.length > 0 &&
+    (draft.transport === "stdio"
+      ? draft.command.trim().length > 0
+      : draft.url.trim().length > 0) &&
+    status !== "saving" &&
+    status !== "removing";
+
+  const save = async () => {
+    if (!canSave) return;
+    setStatus("saving");
+    try {
+      const keyPath = `mcp_servers.${name}`;
+      const value =
+        draft.transport === "stdio"
+          ? {
+              command: draft.command.trim(),
+              args: draft.args.map((a) => a.trim()).filter(Boolean),
+              env: rowsToRecord(draft.env),
+              env_vars: draft.envVars.map((v) => v.trim()).filter(Boolean),
+              cwd: draft.cwd.trim() || undefined,
+            }
+          : {
+              url: draft.url.trim(),
+              bearer_token_env_var: draft.bearerTokenEnvVar.trim() || undefined,
+              http_headers: rowsToRecord(draft.httpHeaders),
+              env_http_headers: rowsToRecord(draft.envHttpHeaders),
+            };
+
+      await rpcRequest("config/batchWrite", {
+        edits: [{ keyPath, value, mergeStrategy: "replace" }],
+        reloadUserConfig: true,
+      });
+      await rpcRequest("config/mcpServer/reload", {});
+      setStatus("saved");
+      window.setTimeout(() => setStatus("idle"), 900);
+      onSaved();
+      onClose();
+    } catch {
+      setStatus("error");
+      window.setTimeout(() => setStatus("idle"), 1800);
+    }
+  };
+
+  const remove = async () => {
+    if (isCreate || !name) return;
+    setStatus("removing");
+    try {
+      await rpcRequest("config/batchWrite", {
+        edits: [{ keyPath: `mcp_servers.${name}`, value: null, mergeStrategy: "replace" }],
+        reloadUserConfig: true,
+      });
+      await rpcRequest("config/mcpServer/reload", {});
+      setStatus("removed");
+      window.setTimeout(() => setStatus("idle"), 900);
+      onSaved();
+      onClose();
+    } catch {
+      setStatus("error");
+      window.setTimeout(() => setStatus("idle"), 1800);
+    }
+  };
+
+  return (
+    <ModalShell
+      title={isCreate ? "Add MCP server" : `Update ${name}`}
+      description={
+        isCreate
+          ? "Add a custom MCP server to your Codex configuration."
+          : "Edits are written to your user config.toml and applied after reload."
+      }
+      onClose={onClose}
+    >
+      <div className="grid gap-5">
+        <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-border-light flex items-center justify-between gap-4">
+            <div className="label-mono">Basics</div>
+            <Segmented
+              value={draft.transport}
+              onChange={(v) =>
+                setDraft({
+                  ...draft,
+                  transport: v === "streamable_http" ? "streamable_http" : "stdio",
+                })
+              }
+              options={[
+                { value: "stdio", label: "STDIO" },
+                { value: "streamable_http", label: "Streamable HTTP" },
+              ]}
+            />
+          </div>
+
+          <div className="divide-y divide-border-light">
+            <div className="px-4 py-3 flex items-center justify-between gap-6">
+              <span className="text-[12.5px] text-text-secondary">Name</span>
+              <input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                disabled={!isCreate}
+                placeholder="MCP server name"
+                className={cn(
+                  "w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120",
+                  !isCreate && "opacity-70 cursor-default",
+                )}
+              />
+            </div>
+
+            {draft.transport === "stdio" ? (
+              <>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">Command to launch</span>
+                  <input
+                    value={draft.command}
+                    onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+                    placeholder="openai-dev-mcp serve-sqlite"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">Arguments</span>
+                  <input
+                    value={draft.args.join(", ")}
+                    onChange={(e) =>
+                      setDraft({ ...draft, args: parseCsvList(e.target.value) })
+                    }
+                    placeholder="comma-separated"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3">
+                  <div className="text-[12.5px] text-text-secondary mb-2">
+                    Environment variables
+                  </div>
+                  <KvEditor
+                    rows={draft.env}
+                    onChange={(env) => setDraft({ ...draft, env })}
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    Environment variable passthrough
+                  </span>
+                  <input
+                    value={draft.envVars.join(", ")}
+                    onChange={(e) =>
+                      setDraft({ ...draft, envVars: parseCsvList(e.target.value) })
+                    }
+                    placeholder="comma-separated env var names"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">Working directory</span>
+                  <input
+                    value={draft.cwd}
+                    onChange={(e) => setDraft({ ...draft, cwd: e.target.value })}
+                    placeholder="~/code"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">URL</span>
+                  <input
+                    value={draft.url}
+                    onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                    placeholder="http://localhost:8080/mcp"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    Bearer token env var
+                  </span>
+                  <input
+                    value={draft.bearerTokenEnvVar}
+                    onChange={(e) =>
+                      setDraft({ ...draft, bearerTokenEnvVar: e.target.value })
+                    }
+                    placeholder="MCP_BEARER_TOKEN"
+                    className="w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+                <div className="px-4 py-3">
+                  <div className="text-[12.5px] text-text-secondary mb-2">Headers</div>
+                  <KvEditor
+                    rows={draft.httpHeaders}
+                    onChange={(httpHeaders) => setDraft({ ...draft, httpHeaders })}
+                  />
+                </div>
+                <div className="px-4 py-3">
+                  <div className="text-[12.5px] text-text-secondary mb-2">
+                    Headers from environment variables
+                  </div>
+                  <KvEditor
+                    rows={draft.envHttpHeaders}
+                    onChange={(envHttpHeaders) => setDraft({ ...draft, envHttpHeaders })}
+                    keyPlaceholder="Header"
+                    valuePlaceholder="ENV_VAR_NAME"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="text-[11.5px] text-text-tertiary leading-relaxed">
+            {status === "saving"
+              ? "Saving…"
+              : status === "saved"
+                ? "Saved."
+                : status === "removing"
+                  ? "Removing…"
+                  : status === "removed"
+                    ? "Removed."
+                    : status === "error"
+                      ? "Couldn’t apply. Try again."
+                      : isCreate
+                        ? "Writes to your user config.toml."
+                        : "Edits apply after reload."}
+          </div>
+          <div className="flex items-center gap-2">
+            {!isCreate && (
+              <button
+                onClick={remove}
+                disabled={status === "saving" || status === "removing"}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-[11.5px] font-medium transition-colors duration-120 cursor-pointer border",
+                  status === "saving" || status === "removing"
+                    ? "bg-bg-secondary text-text-faint border-border-light cursor-default"
+                    : "bg-bg-card text-accent-red border-border hover:border-border-focus",
+                )}
+              >
+                Uninstall
+              </button>
+            )}
+            <button
+              onClick={save}
+              disabled={!canSave}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-[11.5px] font-medium transition-colors duration-120 cursor-pointer",
+                !canSave
+                  ? "bg-bg-secondary text-text-faint border border-border-light cursor-default"
+                  : "bg-text-primary text-bg-card hover:opacity-90",
+              )}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function McpSection() {
+  const [servers, setServers] = useState<McpServerEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalDraft, setModalDraft] = useState<McpServerDraft | null>(null);
+
+  const refresh = () => {
+    setLoading(true);
+    rpcRequest<{ data?: McpServerEntry[] }>("mcpServerStatus/list", {})
+      .then((res) => {
+        if (Array.isArray(res?.data)) setServers(res.data);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
   return (
     <div>
       <SectionHeading
@@ -242,73 +1055,55 @@ function McpSection() {
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <span className="label-mono">Custom servers</span>
-          <button className="text-[11.5px] text-text-secondary hover:text-text-primary transition-colors duration-120 cursor-pointer">
+          <button
+            onClick={() => setModalDraft(buildEmptyDraft("create"))}
+            className="text-[11.5px] text-text-secondary hover:text-text-primary transition-colors duration-120 cursor-pointer"
+          >
             + Add server
           </button>
         </div>
         <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden">
-          <div className="px-4 py-3 flex items-center justify-between">
-            <span className="text-[13px] text-text-primary">unityMCP</span>
-            <div className="flex items-center gap-2">
-              <button className="text-text-faint hover:text-text-secondary transition-colors duration-120 cursor-pointer">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path d="M5.5 8a2.5 2.5 0 1 0 5 0 2.5 2.5 0 0 0-5 0Z" stroke="currentColor" strokeWidth="1.2" />
-                  <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-              </button>
-              <div className="relative inline-flex h-5 w-9 items-center rounded-full border border-border bg-bg-secondary cursor-not-allowed opacity-50">
-                <span className="inline-block h-3.5 w-3.5 rounded-full bg-bg-card shadow-sm translate-x-0.5" />
-              </div>
+          {loading ? (
+            <div className="px-4 py-3 text-[12px] text-text-faint">
+              Loading…
             </div>
-          </div>
+          ) : servers.length === 0 ? (
+            <div className="px-4 py-3 text-[12px] text-text-faint">
+              No MCP servers configured.
+            </div>
+          ) : (
+            servers.map((server) => (
+              <div
+                key={server.name}
+                className="px-4 py-3 flex items-center justify-between border-t border-border-light first:border-t-0 cursor-pointer"
+                onClick={async () => {
+                  const name = server.name;
+                  const base = buildEmptyDraft("edit", name);
+                  setModalDraft(base);
+                  const loaded = await readMcpServerConfigFromEffectiveConfig(name);
+                  if (loaded) setModalDraft({ ...base, ...loaded, mode: "edit", name });
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <span className="text-[13px] text-text-primary">{server.name}</span>
+                <span className="font-mono text-[10px] text-text-faint">
+                  {server.authStatus ?? "—"}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <span className="label-mono">Recommended servers</span>
-          <button className="text-[11.5px] text-text-secondary hover:text-text-primary transition-colors duration-120 cursor-pointer flex items-center gap-1">
-            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-              <path d="M10 6A4 4 0 1 1 6 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <path d="M6 2l2-2M6 2l2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Refresh
-          </button>
-        </div>
-        <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden divide-y divide-border-light">
-          {[
-            { name: "Linear", author: "Linear", description: "Integrate with Linear's issue tracking and project management", enabled: true },
-            { name: "Notion", author: "Notion", description: "Read docs, update pages, manage tasks", enabled: false },
-            { name: "Figma", author: "Figma", description: "Generate better code by bringing in full Figma context", enabled: false },
-            { name: "Playwright", author: "Microsoft", description: "Integrate browser automation to implement and test UI.", enabled: false },
-          ].map((server) => (
-            <div key={server.name} className="px-4 py-3 flex items-center gap-3">
-              <div className="w-7 h-7 rounded bg-bg-secondary border border-border-light flex items-center justify-center shrink-0">
-                <span className="font-mono text-[10px] text-text-tertiary">{server.name[0]}</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-text-primary">
-                  {server.name}{" "}
-                  <span className="text-text-faint font-normal">by {server.author}</span>
-                </div>
-                <div className="text-[11px] text-text-tertiary mt-0.5 truncate">
-                  {server.description}
-                </div>
-              </div>
-              {server.enabled ? (
-                <div className="relative inline-flex h-5 w-9 items-center rounded-full border border-accent-blue bg-accent-blue cursor-pointer shrink-0">
-                  <span className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm translate-x-4" />
-                </div>
-              ) : (
-                <button className="shrink-0 px-3 py-1 text-[11.5px] font-medium text-text-secondary border border-border rounded hover:border-border-focus hover:text-text-primary transition-all duration-120 cursor-pointer">
-                  Install
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+      {modalDraft && (
+        <McpServerModal
+          draft={modalDraft}
+          setDraft={(next) => setModalDraft(next)}
+          onClose={() => setModalDraft(null)}
+          onSaved={() => refresh()}
+        />
+      )}
     </div>
   );
 }

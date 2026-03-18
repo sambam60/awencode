@@ -128,7 +128,7 @@
 
   --border-default: #d8dadd;
   --border-light: #e4e5e8;
-  --border-focus: #1a1a1a;
+  --border-focus: #959ba7;
 
   --text-primary: #1a1a1a;
   --text-secondary: #6b6f76;
@@ -140,6 +140,10 @@
   --accent-red: #c0392b;
   --accent-green: #3a9d63;
   --accent-grey: #9b9ea4;
+
+  /* Switch / toggle "on" color */
+  --toggle-on: rgb(153, 207, 141);
+  --toggle-knob: #ffffff;
 }
 
 .dark {
@@ -162,6 +166,10 @@
   --accent-red: #d4524a;
   --accent-green: #4aad6e;
   --accent-grey: #6b6f76;
+
+  /* Keep toggle color consistent across themes */
+  --toggle-on: rgb(153, 207, 141);
+  --toggle-knob: #ffffff;
 }
 
 /* ── Base styles ── */

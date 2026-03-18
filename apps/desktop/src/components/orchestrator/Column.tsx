@@ -45,7 +45,8 @@ export function Column({
             key={agent.id}
             agent={agent}
             selected={selectedId === agent.id}
-            onSelect={onSelect}
+            onOpenThread={onSelect}
+            onOpenDetails={onSelect}
           />
         ))}
         {agents.length === 0 && (

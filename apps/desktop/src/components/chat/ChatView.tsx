@@ -16,6 +16,12 @@ import {
 import { ComposeArea } from "./ComposeArea";
 import { statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { invoke } from "@tauri-apps/api/core";
+import { rpcRequest } from "@/lib/rpc-client";
+import { useAppStore } from "@/lib/stores/app-store";
+import { useThreadStore } from "@/lib/stores/thread-store";
+import { useAppListStore } from "@/lib/stores/app-list-store";
+import { getSelectedModel } from "@/lib/stores/settings-store";
 import type { Agent, AgentMessage } from "@/lib/stores/thread-store";
 
 interface ChatViewProps {
@@ -87,15 +93,69 @@ function MessageRow({ message }: { message: AgentMessage }) {
   );
 }
 
-// Git actions: Commit, push, create PR
-const GIT_ACTIONS = [
-  { label: "Commit", icon: GitCommit },
-  { label: "push", icon: CloudUpload },
-  { label: "create PR", icon: GitPullRequest },
-] as const;
-
-function GitButton({ pr }: { pr: string | null }) {
+function GitButton({
+  pr,
+  projectPath,
+  branch,
+  onGitAction,
+}: {
+  pr: string | null;
+  projectPath: string | null;
+  branch: string;
+  onGitAction: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [gitError, setGitError] = useState<string | null>(null);
+
+  const handleCommit = async () => {
+    if (!projectPath || !commitMessage.trim()) return;
+    setGitError(null);
+    try {
+      await invoke("git_commit", { path: projectPath, message: commitMessage.trim() });
+      setCommitOpen(false);
+      setCommitMessage("");
+      onGitAction();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handlePush = async () => {
+    setOpen(false);
+    if (!projectPath) return;
+    setGitError(null);
+    try {
+      await invoke("git_push", { path: projectPath });
+      onGitAction();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleCreatePR = async () => {
+    setOpen(false);
+    if (!projectPath) return;
+    try {
+      const info = await invoke<{ originUrl?: string | null; branch?: string | null }>("get_git_info", {
+        path: projectPath,
+      });
+      const url = info?.originUrl;
+      const b = info?.branch;
+      if (url && b) {
+        const m = url.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+        if (m) {
+          const repo = m[1];
+          const prUrl = `https://github.com/${repo}/compare/${encodeURIComponent(b)}?expand=1`;
+          await invoke("open_url", { url: prUrl });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <div className="relative">
       <button
@@ -109,20 +169,69 @@ function GitButton({ pr }: { pr: string | null }) {
       >
         {pr ? <GitPullRequest size={12} /> : <GitBranch size={12} />}
         {pr && <span>{pr}</span>}
+        {branch && !pr && <span>{branch}</span>}
         <ChevronDown size={9} />
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
-          {GIT_ACTIONS.map(({ label, icon: Icon }) => (
-            <button
-              key={label}
-              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
-            >
-              <Icon size={12} className="text-text-faint shrink-0" />
-              <span className="text-[12px] text-text-primary">{label}</span>
-            </button>
-          ))}
+          <button
+            onClick={() => {
+              setOpen(false);
+              setCommitOpen(true);
+              setGitError(null);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+          >
+            <GitCommit size={12} className="text-text-faint shrink-0" />
+            <span className="text-[12px] text-text-primary">Commit</span>
+          </button>
+          <button
+            onClick={handlePush}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+          >
+            <CloudUpload size={12} className="text-text-faint shrink-0" />
+            <span className="text-[12px] text-text-primary">Push</span>
+          </button>
+          <button
+            onClick={handleCreatePR}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+          >
+            <GitPullRequest size={12} className="text-text-faint shrink-0" />
+            <span className="text-[12px] text-text-primary">Create PR</span>
+          </button>
         </div>
+      )}
+      {commitOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCommitOpen(false)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-default bg-bg-card p-4 shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
+            <div className="font-mono text-[10px] text-text-faint uppercase tracking-widest mb-2">
+              Commit message
+            </div>
+            <input
+              value={commitMessage}
+              onChange={(e) => setCommitMessage(e.target.value)}
+              placeholder="Describe your changes..."
+              className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
+            />
+            {gitError && <p className="text-[11px] text-accent-red mb-2">{gitError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setCommitOpen(false)}
+                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCommit}
+                disabled={!commitMessage.trim()}
+                className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 disabled:opacity-50"
+              >
+                Commit
+              </button>
+            </div>
+          </div>
+        </>
       )}
       {open && (
         <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
@@ -131,16 +240,35 @@ function GitButton({ pr }: { pr: string | null }) {
   );
 }
 
-// Open In — icon-only trigger, dropdown shows detected apps (icons + labels)
-const OPEN_IN_APPS = [
-  { label: "Cursor", icon: Box },
-  { label: "VS Code", icon: Code2 },
-  { label: "Terminal", icon: Terminal },
-  { label: "Finder", icon: FolderOpen },
-] as const;
+const APP_ICON_MAP: Record<string, typeof Box> = {
+  cursor: Box,
+  vscode: Code2,
+  code: Code2,
+  terminal: Terminal,
+  finder: FolderOpen,
+};
 
 function OpenInButton() {
   const [open, setOpen] = useState(false);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const apps = useAppListStore((s) => s.apps);
+  const displayApps = apps.length > 0 ? apps : [
+    { id: "cursor", name: "Cursor", isAccessible: true },
+    { id: "vscode", name: "VS Code", isAccessible: true },
+    { id: "terminal", name: "Terminal", isAccessible: true },
+    { id: "finder", name: "Finder", isAccessible: true },
+  ];
+
+  const handleOpenIn = async (appId: string) => {
+    setOpen(false);
+    const path = projectPath;
+    if (!path) return;
+    try {
+      await invoke("open_in_app", { appId, path });
+    } catch {
+      // ignore
+    }
+  };
 
   return (
     <div className="relative">
@@ -154,15 +282,20 @@ function OpenInButton() {
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-44 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
-          {OPEN_IN_APPS.map(({ label, icon: Icon }) => (
-            <button
-              key={label}
-              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
-            >
-              <Icon size={12} className="text-text-faint shrink-0" />
-              <span className="text-[12px] text-text-primary">{label}</span>
-            </button>
-          ))}
+          {displayApps.map((app) => {
+            const Icon = APP_ICON_MAP[app.id.toLowerCase()] ?? Box;
+            return (
+              <button
+                key={app.id}
+                onClick={() => handleOpenIn(app.id)}
+                disabled={!projectPath}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left disabled:opacity-50 disabled:cursor-default"
+              >
+                <Icon size={12} className="text-text-faint shrink-0" />
+                <span className="text-[12px] text-text-primary">{app.name}</span>
+              </button>
+            );
+          })}
         </div>
       )}
       {open && (
@@ -216,14 +349,69 @@ function DiffButton({ fileCount }: { fileCount: number }) {
 export function ChatView({ agent, onBack }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const setAgentCodexThreadId = useThreadStore((s) => s.setAgentCodexThreadId);
+  const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
+
+  useEffect(() => {
+    if (!agent.codexThreadId || !projectPath) return;
+    invoke<{ branch?: string | null; sha?: string | null; originUrl?: string | null }>("get_git_info", {
+      path: projectPath,
+    })
+      .then((info) => {
+        if (!info?.branch && !info?.sha && !info?.originUrl) return;
+        return rpcRequest("thread/metadata/update", {
+          threadId: agent.codexThreadId,
+          gitInfo: {
+            branch: info.branch ?? undefined,
+            sha: info.sha ?? undefined,
+            originUrl: info.originUrl ?? undefined,
+          },
+        });
+      })
+      .catch(() => {});
+  }, [agent.codexThreadId, agent.id, projectPath]);
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [agent.messages.length]);
+  }, [agent.messages.length, agent.streamingBuffer]);
 
-  const handleSend = (_message: string) => {
-    // Will be wired to rpc in a future phase
+  const handleSend = async (message: string) => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    appendAgentMessage(agent.id, { role: "you", content: trimmed });
+
+    let threadId = agent.codexThreadId;
+    if (!threadId) {
+      try {
+        const selected = getSelectedModel();
+        const res = await rpcRequest<{ thread: { id: string } }>("thread/start", {
+          cwd: projectPath ?? undefined,
+          model: selected?.id,
+          modelProvider: selected?.provider,
+        });
+        threadId = res?.thread?.id;
+        if (threadId) {
+          setAgentCodexThreadId(agent.id, threadId);
+        }
+      } catch (e) {
+        console.error("thread/start failed", e);
+        return;
+      }
+    }
+    if (!threadId) return;
+
+    try {
+      await rpcRequest("turn/start", {
+        threadId,
+        input: [{ type: "text", text: trimmed, textElements: [] }],
+      });
+    } catch (e) {
+      console.error("turn/start failed", e);
+    }
   };
 
   const canCompose =
@@ -297,7 +485,12 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         <div className="flex items-center gap-1.5 shrink-0">
           <DiffButton fileCount={agent.files.length} />
           <OpenInButton />
-          <GitButton pr={agent.pr} />
+          <GitButton
+            pr={agent.pr}
+            projectPath={projectPath}
+            branch={agent.branch}
+            onGitAction={() => {}}
+          />
         </div>
       </div>
 
@@ -314,7 +507,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-[680px] mx-auto px-6 py-6">
-          {agent.messages.length === 0 ? (
+          {agent.messages.length === 0 && !agent.streamingBuffer ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="w-8 h-8 rounded-full border border-border-light flex items-center justify-center">
                 <MessageSquare size={14} className="text-text-faint" />
@@ -329,9 +522,19 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               </div>
             </div>
           ) : (
-            agent.messages.map((msg, i) => (
-              <MessageRow key={i} message={msg} />
-            ))
+            <>
+              {agent.messages.map((msg, i) => (
+                <MessageRow key={i} message={msg} />
+              ))}
+              {agent.streamingBuffer ? (
+                <div className="mb-4">
+                  <div className="text-[13px] text-text-primary leading-relaxed whitespace-pre-wrap">
+                    {agent.streamingBuffer}
+                    <span className="inline-block w-2 h-4 ml-0.5 bg-text-primary animate-pulse" />
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </div>
