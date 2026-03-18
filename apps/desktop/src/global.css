@@ -1,0 +1,237 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Font faces ── */
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas-Medium-Italic.ttf") format("truetype");
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas-Bold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text";
+  src: url("./assets/fonts/neueHaas-Bold-Italic.ttf") format("truetype");
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Neue Haas Grotesk Text Fallback";
+  src: local("Arial");
+  ascent-override: 94.14%;
+  descent-override: 18.01%;
+  line-gap-override: 0.00%;
+  size-adjust: 104.95%;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa-Italic.otf") format("opentype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa-Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa-Medium-Italic.otf") format("opentype");
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa-Bold.otf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa";
+  src: url("./assets/fonts/gtFlexa-Bold-Italic.otf") format("opentype");
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GT Flexa Fallback";
+  src: local("Arial");
+  ascent-override: 72.27%;
+  descent-override: 17.15%;
+  line-gap-override: 0.00%;
+  size-adjust: 135.87%;
+}
+
+/* ── Design tokens ── */
+
+:root {
+  --bg-primary: #ecedef;
+  --bg-secondary: #f4f5f6;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+
+  --border-default: #d8dadd;
+  --border-light: #e4e5e8;
+  --border-focus: #1a1a1a;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6f76;
+  --text-tertiary: #9b9ea4;
+  --text-faint: #b8bbc0;
+
+  --accent-blue: #4a7fd4;
+  --accent-amber: #c78f2e;
+  --accent-red: #c0392b;
+  --accent-green: #3a9d63;
+  --accent-grey: #9b9ea4;
+}
+
+.dark {
+  --bg-primary: #111113;
+  --bg-secondary: #18181b;
+  --bg-card: #1e1e22;
+  --bg-input: #1e1e22;
+
+  --border-default: #2a2a2e;
+  --border-light: #232327;
+  --border-focus: #e2e2e2;
+
+  --text-primary: #e2e2e2;
+  --text-secondary: #9b9ea4;
+  --text-tertiary: #6b6f76;
+  --text-faint: #444449;
+
+  --accent-blue: #5b8fd9;
+  --accent-amber: #d4a03a;
+  --accent-red: #d4524a;
+  --accent-green: #4aad6e;
+  --accent-grey: #6b6f76;
+}
+
+/* ── Base styles ── */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary font-sans antialiased;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+
+  ::selection {
+    background: var(--accent-blue);
+    color: white;
+    opacity: 0.2;
+  }
+}
+
+/* ── Utility classes ── */
+
+@layer components {
+  .glass-overlay {
+    background: rgba(255, 255, 255, 0.58);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  }
+
+  .dark .glass-overlay {
+    background: rgba(17, 17, 19, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+
+  .glass-backdrop {
+    background: rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .dark .glass-backdrop {
+    background: rgba(0, 0, 0, 0.4);
+  }
+
+  .label-mono {
+    @apply font-mono text-2xs uppercase tracking-label text-text-faint font-medium;
+  }
+
+  .kbd-badge {
+    @apply font-mono text-[10px] text-text-faint bg-bg-secondary border border-border-light px-[5px] py-[1px] rounded-sm;
+  }
+
+  .neu-inset {
+    background: var(--bg-secondary);
+    box-shadow:
+      inset 2px 2px 4px rgba(0, 0, 0, 0.06),
+      inset -2px -2px 4px rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+  }
+
+  .dark .neu-inset {
+    box-shadow:
+      inset 2px 2px 4px rgba(0, 0, 0, 0.3),
+      inset -2px -2px 4px rgba(255, 255, 255, 0.02);
+  }
+}

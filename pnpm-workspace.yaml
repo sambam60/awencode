@@ -1,6 +1,6 @@
 packages:
-  - sdk/typescript
-  - shell-tool-mcp
+  - sdk/python
+  - apps/desktop
 
 ignoredBuiltDependencies:
   - esbuild

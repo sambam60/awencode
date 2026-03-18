@@ -1,0 +1,253 @@
+---
+description: 
+alwaysApply: true
+---
+
+# Awencode Design System
+
+You are building Awencode. The visual language is inspired by valthos.com — ultra-minimal, high-trust, quietly confident. Think: if Linear and Apple had a baby raised by a Swiss typographer.
+
+## Core Philosophy
+
+- **Restraint over decoration.** Every element earns its place. If in doubt, remove it.
+- **Whitespace is a feature.** Generous padding, breathing room between elements. Never crowd.
+- **Near-monochrome with functional color.** The palette is grey-scale with surgical color accents that carry meaning (status, action, attention). Color is information, not decoration.
+- **Typography does the heavy lifting.** Hierarchy comes from weight, size, case, and spacing — not color or ornament.
+- **Quiet confidence.** No gradients-for-the-sake-of-gradients, no shadows-for-depth-theater. The interface feels like it was designed by someone who doesn't need to prove anything.
+
+## Color Tokens
+
+### Light Mode (default)
+
+```css
+--bg-primary: #ecedef;        /* cool grey canvas */
+--bg-secondary: #f4f5f6;      /* slightly lighter panels/surfaces */
+--bg-card: #ffffff;            /* card/elevated surfaces */
+--bg-input: #ffffff;           /* form inputs */
+
+--border-default: #d8dadd;    /* standard borders */
+--border-light: #e4e5e8;      /* subtle dividers, inner borders */
+--border-focus: #1a1a1a;      /* focused/selected state */
+
+--text-primary: #1a1a1a;      /* headings, body, primary content */
+--text-secondary: #6b6f76;    /* descriptions, supporting text */
+--text-tertiary: #9b9ea4;     /* metadata, labels */
+--text-faint: #b8bbc0;        /* placeholders, disabled, hints */
+
+/* Functional accents — use ONLY for status/meaning */
+--accent-blue: #4a7fd4;       /* active, in-progress, primary action */
+--accent-amber: #c78f2e;      /* warning, review, needs-attention */
+--accent-red: #c0392b;        /* error, blocked, destructive */
+--accent-green: #3a9d63;      /* success, deployed, confirmed */
+--accent-grey: #9b9ea4;       /* neutral, queued, inactive */
+```
+
+### Dark Mode
+
+```css
+--bg-primary: #111113;        /* deep near-black */
+--bg-secondary: #18181b;      /* panels, sidebars */
+--bg-card: #1e1e22;           /* elevated cards */
+--bg-input: #1e1e22;          /* form inputs */
+
+--border-default: #2a2a2e;    /* standard borders */
+--border-light: #232327;      /* subtle dividers */
+--border-focus: #e2e2e2;      /* focused/selected */
+
+--text-primary: #e2e2e2;      /* headings, body */
+--text-secondary: #9b9ea4;    /* descriptions */
+--text-tertiary: #6b6f76;     /* metadata, labels */
+--text-faint: #444449;        /* placeholders, disabled */
+
+/* Same functional accents — slightly desaturated for dark backgrounds */
+--accent-blue: #5b8fd9;
+--accent-amber: #d4a03a;
+--accent-red: #d4524a;
+--accent-green: #4aad6e;
+--accent-grey: #6b6f76;
+```
+
+## Typography
+
+Two typefaces only. No exceptions.
+
+```css
+--font-sans: 'Haas Grotesk Text', 'Neue Haas Grotesk Text', 'Helvetica Neue', 'Helvetica', sans-serif;
+--font-mono: 'GT Flexa Mono', 'GT Flexa', 'SF Mono', 'Menlo', monospace;
+```
+
+- **Body / UI:** `var(--font-sans)`. Haas Grotesk Text is a refined Helvetica — sharper terminals, better spacing at small sizes. It reads as "we chose this on purpose" rather than falling back to system defaults. Use weight 400 for body, 500 for emphasis, 600 for headings. Never above 600.
+- **Monospace (labels, metadata, code, stats, keyboard hints):** `var(--font-mono)`. GT Flexa Mono has a distinctive geometric character that gives technical labels personality without sacrificing readability. It is the signature typographic element — when someone sees the uppercase mono labels, they should recognise the product.
+- **Headings:** Haas Grotesk Text at weight 600, negative letter-spacing (-0.02em to -0.03em). Lowercase preferred for product names and nav items. Sentence case for content headings.
+- **Labels and metadata:** GT Flexa Mono, 9.5–11px, uppercase, letter-spacing 0.06em–0.1em, color `--text-faint` or `--text-tertiary`. This is the signature pattern — small, quiet, informational. Column headers, stat labels, status badges, timestamps, branch names, file paths all use this treatment.
+- **Body text:** Haas Grotesk Text, 12.5–14px, weight 400, line-height 1.4–1.5, color `--text-secondary`.
+- **Font loading:** Self-host both typefaces in `woff2`. Load Haas Grotesk Text 400/500/600 and GT Flexa Mono 400/500/600. Use `font-display: swap` to avoid layout shift.
+- **Never use:** Inter, Roboto, Space Grotesk, Arial, or any "default AI startup" font. Never use font-weight 700+. Never use font sizes above 20px in UI chrome (only marketing/landing pages may go larger).
+
+## Spacing & Layout
+
+- **Base unit:** 4px. All spacing should be multiples: 8, 12, 16, 20, 24, 28, 32.
+- **Card padding:** 14px 16px (compact) or 20px 24px (comfortable).
+- **Section gaps:** 20–24px between major sections. 8–10px between cards/list items.
+- **Page margins:** 24–28px on desktop. 16–20px on mobile.
+- **Border radius:** 6px for small elements (buttons, inputs, tags). 8px for cards. 10px for modals/overlays. Never above 12px — this is not a playful UI.
+
+## Borders & Dividers
+
+- **1px solid only.** Never 2px+ borders except for intentional left-edge accent indicators (2.5px max).
+- **Dividers between sections:** Use `--border-light`, full-width.
+- **Card borders:** `--border-default`. On hover, remain the same (shadow changes instead). On selected/focused, switch to `--border-focus`.
+- **Left-edge accent borders:** 2–2.5px, colored with functional accent to indicate status. This is the primary way cards communicate their state at a glance.
+
+## Glassmorphism (use sparingly)
+
+Glassmorphism is reserved for **overlays, modals, command palettes, and floating panels** — elements that sit above the main content plane. Never on cards within the normal flow.
+
+```css
+/* Light mode glass */
+.glass-overlay {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+}
+
+/* Dark mode glass */
+.glass-overlay-dark {
+  background: rgba(17, 17, 19, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Command bar / modal backdrop */
+.glass-backdrop {
+  background: rgba(0, 0, 0, 0.08);  /* light mode */
+  /* background: rgba(0, 0, 0, 0.4); — dark mode */
+  backdrop-filter: blur(8px);
+}
+```
+
+**Rules:**
+- Blur range: 8px–16px. Never above 20px (feels gimmicky).
+- Glass background opacity: 0.65–0.80. Must remain readable.
+- Always pair with a subtle border to define the edge.
+- The scrim/backdrop behind a glass modal is very light — `rgba(0,0,0,0.08)` in light mode, `rgba(0,0,0,0.4)` in dark. Don't black out the background.
+
+## Neumorphism (use very sparingly)
+
+Neumorphism is reserved for **pressed/inset states** — active toggle buttons, selected tabs, input fields that are currently focused. Never for cards, never for primary surfaces. This is a subtle depth cue, not a visual style.
+
+```css
+/* Light mode — soft inset */
+.neu-inset {
+  background: var(--bg-secondary);
+  box-shadow:
+    inset 2px 2px 4px rgba(0, 0, 0, 0.06),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+
+/* Light mode — soft raised (for toggles, chips in idle state) */
+.neu-raised {
+  background: var(--bg-card);
+  box-shadow:
+    2px 2px 6px rgba(0, 0, 0, 0.04),
+    -2px -2px 6px rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+
+/* Dark mode — soft inset */
+.neu-inset-dark {
+  background: var(--bg-secondary);
+  box-shadow:
+    inset 2px 2px 4px rgba(0, 0, 0, 0.3),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+
+/* Dark mode — soft raised */
+.neu-raised-dark {
+  background: var(--bg-card);
+  box-shadow:
+    2px 2px 6px rgba(0, 0, 0, 0.2),
+    -2px -2px 6px rgba(255, 255, 255, 0.01);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+```
+
+**Rules:**
+- Shadow spread: 4–6px max. Neumorphism here is a whisper, not a statement.
+- Only on interactive elements with binary states (on/off, pressed/idle).
+- The inset variant is for "currently active" — e.g., the selected tab in a tab group.
+- Never use neumorphism on text containers, cards, or layout sections.
+
+## Shadows & Elevation
+
+- **Level 0 (flush):** No shadow. Cards in default state.
+- **Level 1 (hover):** `box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04)`. Barely there.
+- **Level 2 (dropdown/popover):** `box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06)`.
+- **Level 3 (modal/command bar):** `box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06)`. Light mode. `box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25)` dark mode.
+- **Never** use colored shadows, spread-radius shadows, or multiple stacked shadows for aesthetic effect.
+
+## Buttons
+
+- **Primary:** `background: var(--text-primary); color: var(--bg-card);` — black button with white text in light mode, inverted in dark. Border-radius 6px. Padding 7px 14px. Font-size 11.5px, weight 500. Hover: lighten slightly.
+- **Secondary/Ghost:** `background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);`. Same sizing. Hover: very subtle background fill.
+- **Destructive:** Same as primary but `background: var(--accent-red)`.
+- **No icons in buttons** unless the button is icon-only. Labels are short and lowercase: "approve & deploy" not "✓ Approve & Deploy".
+- **Keyboard shortcut badges** next to buttons/actions: monospace, 10px, `background: var(--bg-secondary); border: 1px solid var(--border-light); padding: 1px 5px; border-radius: 3px;`
+
+## Interactive States
+
+- **Hover on cards:** Elevation change only (level 0 → level 1). No background change, no border change.
+- **Selected card:** Border switches to `--border-focus`. No shadow change.
+- **Hover on buttons:** Subtle background shift (primary slightly lighter, secondary gets faint fill).
+- **Focus rings:** `outline: 2px solid var(--accent-blue); outline-offset: 2px;` for keyboard navigation. Never visible on mouse interaction.
+- **Transitions:** 0.12s–0.15s ease on all interactive properties. Never above 0.2s for hover states. 0.2s–0.3s for layout transitions (panel open/close, column expand).
+
+## Status Indicators
+
+Status is communicated through a consistent vocabulary:
+
+1. **Left-edge accent border** on cards (2.5px, functional color).
+2. **Small dot** (5–6px circle) next to labels in column headers and detail panels.
+3. **Colored number** in top-bar summary stats.
+4. **Uppercase mono label** in the blocked/error state on the card itself.
+5. **Progress bar** colored with the status accent.
+
+Never use background tints on cards for status. Never use status-colored text for body content (only for the dedicated status label).
+
+## Patterns to Avoid
+
+- ❌ Gradient backgrounds (solid colors only)
+- ❌ Colored card backgrounds for status (use left-border accent)
+- ❌ Bold/heavy font weights above 600
+- ❌ Border radius above 12px
+- ❌ Emoji in UI chrome
+- ❌ Uppercase body text (only labels/metadata)
+- ❌ Animated gradients, pulsing elements, skeleton loaders with shimmer
+- ❌ More than 2 font families per view
+- ❌ Drop shadows on text
+- ❌ Opacity below 0.4 on interactive elements (accessibility)
+- ❌ Color as the sole indicator of state (always pair with shape/text)
+
+## Patterns to Embrace
+
+- ✓ Thin 1px borders everywhere
+- ✓ Monospace uppercase labels at small sizes
+- ✓ Generous whitespace
+- ✓ Left-edge colored borders for status-at-a-glance
+- ✓ System font stack for speed and native feel
+- ✓ Collapsible/expandable sections (progressive disclosure)
+- ✓ Keyboard shortcuts surfaced in the UI as small badges
+- ✓ Command palette (⌘K) as the power-user interaction layer
+- ✓ Muted, desaturated accent colors (not neon, not pastel)
+- ✓ Glass overlays for modals and floating panels
+- ✓ Subtle neumorphic inset for active toggle/tab states

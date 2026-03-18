@@ -3,7 +3,6 @@ members = [
     "backend-client",
     "async-utils",
     "app-server",
-    "app-server-client",
     "app-server-protocol",
     "apply-patch",
     "arg0",
@@ -19,15 +18,11 @@ members = [
     "hooks",
     "secrets",
     "execpolicy",
-    "execpolicy-legacy",
     "keyring-store",
     "file-search",
     "linux-sandbox",
-    "lmstudio",
     "login",
-    "mcp-server",
     "network-proxy",
-    "ollama",
     "protocol",
     "rmcp-client",
     "otel",
@@ -43,9 +38,6 @@ members = [
     "utils/rustls-provider",
     "utils/string",
     "utils/cli",
-    "utils/elapsed",
-    "utils/sandbox-summary",
-    "utils/oss",
     "utils/stream-parser",
     "codex-client",
     "codex-api",
@@ -73,7 +65,6 @@ codex-api = { path = "codex-api" }
 codex-artifacts = { path = "artifacts" }
 codex-package-manager = { path = "package-manager" }
 codex-app-server = { path = "app-server" }
-codex-app-server-client = { path = "app-server-client" }
 codex-app-server-protocol = { path = "app-server-protocol" }
 codex-apply-patch = { path = "apply-patch" }
 codex-arg0 = { path = "arg0" }
@@ -93,11 +84,8 @@ codex-git = { path = "utils/git" }
 codex-hooks = { path = "hooks" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
-codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
-codex-mcp-server = { path = "mcp-server" }
 codex-network-proxy = { path = "network-proxy" }
-codex-ollama = { path = "ollama" }
 codex-otel = { path = "otel" }
 codex-protocol = { path = "protocol" }
 codex-rmcp-client = { path = "rmcp-client" }
@@ -111,20 +99,16 @@ codex-utils-absolute-path = { path = "utils/absolute-path" }
 codex-utils-cache = { path = "utils/cache" }
 codex-utils-cargo-bin = { path = "utils/cargo-bin" }
 codex-utils-cli = { path = "utils/cli" }
-codex-utils-elapsed = { path = "utils/elapsed" }
 codex-utils-home-dir = { path = "utils/home-dir" }
 codex-utils-image = { path = "utils/image" }
 codex-utils-json-to-toml = { path = "utils/json-to-toml" }
-codex-utils-oss = { path = "utils/oss" }
 codex-utils-pty = { path = "utils/pty" }
 codex-utils-readiness = { path = "utils/readiness" }
 codex-utils-rustls-provider = { path = "utils/rustls-provider" }
-codex-utils-sandbox-summary = { path = "utils/sandbox-summary" }
 codex-utils-stream-parser = { path = "utils/stream-parser" }
 codex-utils-string = { path = "utils/string" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 core_test_support = { path = "core/tests/common" }
-mcp_test_support = { path = "mcp-server/tests/common" }
 
 # External
 age = "0.11.1"

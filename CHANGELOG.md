@@ -1,1 +1,3 @@
-The changelog can be found on the [releases page](https://github.com/openai/codex/releases).
+# Changelog
+
+All notable changes to Awencode will be documented in this file.
