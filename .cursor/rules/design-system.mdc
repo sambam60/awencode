@@ -78,7 +78,7 @@ Two typefaces only. No exceptions.
 
 - **Body / UI:** `var(--font-sans)`. Haas Grotesk Text is a refined Helvetica — sharper terminals, better spacing at small sizes. It reads as "we chose this on purpose" rather than falling back to system defaults. Use weight 400 for body, 500 for emphasis, 600 for headings. Never above 600.
 - **Monospace (labels, metadata, code, stats, keyboard hints):** `var(--font-mono)`. GT Flexa Mono has a distinctive geometric character that gives technical labels personality without sacrificing readability. It is the signature typographic element — when someone sees the uppercase mono labels, they should recognise the product.
-- **Headings:** Haas Grotesk Text at weight 600, negative letter-spacing (-0.02em to -0.03em). Lowercase preferred for product names and nav items. Sentence case for content headings.
+- **Headings:** Haas Grotesk Text at weight 600, negative letter-spacing (-0.02em to -0.03em). 
 - **Labels and metadata:** GT Flexa Mono, 9.5–11px, uppercase, letter-spacing 0.06em–0.1em, color `--text-faint` or `--text-tertiary`. This is the signature pattern — small, quiet, informational. Column headers, stat labels, status badges, timestamps, branch names, file paths all use this treatment.
 - **Body text:** Haas Grotesk Text, 12.5–14px, weight 400, line-height 1.4–1.5, color `--text-secondary`.
 - **Font loading:** Self-host both typefaces in `woff2`. Load Haas Grotesk Text 400/500/600 and GT Flexa Mono 400/500/600. Use `font-display: swap` to avoid layout shift.
@@ -131,8 +131,8 @@ Glassmorphism is reserved for **overlays, modals, command palettes, and floating
 ```
 
 **Rules:**
-- Blur range: 8px–16px. Never above 20px (feels gimmicky).
-- Glass background opacity: 0.65–0.80. Must remain readable.
+- Blur range: 6px–16px. Never above 20px (feels gimmicky).
+- Glass background opacity: 0.45–0.80. Must remain readable.
 - Always pair with a subtle border to define the edge.
 - The scrim/backdrop behind a glass modal is very light — `rgba(0,0,0,0.08)` in light mode, `rgba(0,0,0,0.4)` in dark. Don't black out the background.
 

@@ -20,6 +20,7 @@ interface HomeScreenProps {
 export function HomeScreen({ onOpenProject }: HomeScreenProps) {
   const theme = useAppStore((s) => s.theme);
   const toggleTheme = useAppStore((s) => s.toggleTheme);
+  const setProjectName = useAppStore((s) => s.setProjectName);
   const [hoveredProject, setHoveredProject] = useState<string | null>(null);
 
   const handleOpenProject = async () => {
@@ -27,6 +28,8 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
       if (selected) {
+        const name = typeof selected === "string" ? selected.split("/").filter(Boolean).pop() ?? null : null;
+        setProjectName(name);
         onOpenProject();
       }
     } catch {
@@ -112,7 +115,10 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
               {RECENT_PROJECTS.map((project) => (
                 <button
                   key={project.name}
-                  onClick={onOpenProject}
+                  onClick={() => {
+                    setProjectName(project.name);
+                    onOpenProject();
+                  }}
                   onMouseEnter={() => setHoveredProject(project.name)}
                   onMouseLeave={() => setHoveredProject(null)}
                   className="flex items-center justify-between w-full px-0 py-1.5 text-left cursor-pointer group transition-all duration-120 rounded"

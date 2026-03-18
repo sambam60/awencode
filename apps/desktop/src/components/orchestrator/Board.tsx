@@ -18,6 +18,7 @@ export function Orchestrator() {
   const setAgents = useThreadStore((s) => s.setAgents);
   const addAgent = useThreadStore((s) => s.addAgent);
   const setCommandBarOpen = useAppStore((s) => s.setCommandBarOpen);
+  const projectName = useAppStore((s) => s.projectName);
   const setView = useViewStore((s) => s.setView);
 
   useEffect(() => {
@@ -69,7 +70,7 @@ export function Orchestrator() {
         data-tauri-drag-region
         className="h-11 flex items-center justify-between pl-[92px] pr-5 pt-1.5 shrink-0 select-none border-b border-border-light"
       >
-        {/* Left: settings + new chat (inline with traffic lights) */}
+        {/* Left: settings + new chat + project name (inline with traffic lights) */}
         <div className="flex items-center gap-1">
           {/* Settings */}
           <button
@@ -90,6 +91,12 @@ export function Orchestrator() {
           >
             <img src="/newchat_icon.svg" alt="" className="h-3 w-3 shrink-0 dark:invert" />
           </button>
+          {/* Project name — sans, to the right of new chat */}
+          {projectName && (
+            <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] ml-2 truncate max-w-[200px]">
+              {projectName}
+            </span>
+          )}
         </div>
       </div>
 

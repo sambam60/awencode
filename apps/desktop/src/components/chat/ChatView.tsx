@@ -4,19 +4,18 @@ import {
   ChevronDown,
   Code2,
   GitBranch,
+  GitCommit,
   GitPullRequest,
-  Plus,
+  CloudUpload,
   Box,
   Terminal,
   FolderOpen,
-  Diff,
   ArrowUpDown,
   MessageSquare,
 } from "lucide-react";
 import { ComposeArea } from "./ComposeArea";
 import { statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { useThreadStore } from "@/lib/stores/thread-store";
 import type { Agent, AgentMessage } from "@/lib/stores/thread-store";
 
 interface ChatViewProps {
@@ -88,7 +87,13 @@ function MessageRow({ message }: { message: AgentMessage }) {
   );
 }
 
-// Git / PR button
+// Git actions: Commit, push, create PR
+const GIT_ACTIONS = [
+  { label: "Commit", icon: GitCommit },
+  { label: "push", icon: CloudUpload },
+  { label: "create PR", icon: GitPullRequest },
+] as const;
+
 function GitButton({ pr }: { pr: string | null }) {
   const [open, setOpen] = useState(false);
   return (
@@ -103,29 +108,20 @@ function GitButton({ pr }: { pr: string | null }) {
         )}
       >
         {pr ? <GitPullRequest size={12} /> : <GitBranch size={12} />}
-        {pr ? (
-          <span>{pr}</span>
-        ) : (
-          <span>git</span>
-        )}
+        {pr && <span>{pr}</span>}
         <ChevronDown size={9} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden">
-          <div className="px-3 py-2 border-b border-border-light">
-            <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">Pull Request</span>
-          </div>
-          {pr ? (
-            <button className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left">
-              <GitPullRequest size={12} className="text-[#3a9d63] shrink-0" />
-              <span className="text-[12px] text-text-primary">{pr}</span>
+        <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
+          {GIT_ACTIONS.map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+            >
+              <Icon size={12} className="text-text-faint shrink-0" />
+              <span className="text-[12px] text-text-primary">{label}</span>
             </button>
-          ) : (
-            <button className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left">
-              <Plus size={12} className="text-text-faint shrink-0" />
-              <span className="text-[12px] text-text-secondary">create pull request</span>
-            </button>
-          )}
+          ))}
         </div>
       )}
       {open && (
@@ -135,39 +131,36 @@ function GitButton({ pr }: { pr: string | null }) {
   );
 }
 
-// Open In button
+// Open In — icon-only trigger, dropdown shows detected apps (icons + labels)
+const OPEN_IN_APPS = [
+  { label: "Cursor", icon: Box },
+  { label: "VS Code", icon: Code2 },
+  { label: "Terminal", icon: Terminal },
+  { label: "Finder", icon: FolderOpen },
+] as const;
+
 function OpenInButton() {
   const [open, setOpen] = useState(false);
-
-  const options = [
-    { label: "Cursor", icon: <Box size={12} /> },
-    { label: "VS Code", icon: <Code2 size={12} /> },
-    { label: "Terminal", icon: <Terminal size={12} /> },
-    { label: "Finder", icon: <FolderOpen size={12} /> },
-  ];
 
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-border-default text-text-secondary bg-bg-secondary hover:bg-bg-card text-[11px] font-mono transition-colors duration-120 cursor-pointer"
+        aria-label="Open in"
       >
         <Box size={12} />
-        <span>open in</span>
         <ChevronDown size={9} />
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-44 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
-          <div className="px-3 pt-1.5 pb-1 border-b border-border-light mb-1">
-            <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">Open In</span>
-          </div>
-          {options.map((opt) => (
+          {OPEN_IN_APPS.map(({ label, icon: Icon }) => (
             <button
-              key={opt.label}
+              key={label}
               className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
             >
-              <span className="text-text-faint shrink-0">{opt.icon}</span>
-              <span className="text-[12px] text-text-primary">{opt.label}</span>
+              <Icon size={12} className="text-text-faint shrink-0" />
+              <span className="text-[12px] text-text-primary">{label}</span>
             </button>
           ))}
         </div>
@@ -195,7 +188,6 @@ function DiffButton({ fileCount }: { fileCount: number }) {
         disabled={fileCount === 0}
       >
         <ArrowUpDown size={12} />
-        <span>diff</span>
         {fileCount > 0 && (
           <span className="font-mono text-[9.5px] text-text-faint bg-bg-primary border border-border-light rounded px-1 py-0.5 leading-none">
             {fileCount}
@@ -224,17 +216,6 @@ function DiffButton({ fileCount }: { fileCount: number }) {
 export function ChatView({ agent, onBack }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
-  const setAgents = useThreadStore((s) => s.setAgents);
-  const agents = useThreadStore((s) => s.agents);
-
-  const handleQueue = () => {
-    const updated = agents.map((a) =>
-      a.id === agent.id ? { ...a, status: "queued" as const } : a,
-    );
-    setAgents(updated);
-    onBack();
-  };
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -262,7 +243,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           className="flex items-center gap-1.5 text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120 shrink-0 mr-1"
         >
           <ChevronLeft size={12} />
-          <span className="font-mono text-[10px]">board</span>
+          <span className="font-sans text-[10px]">Back</span>
         </button>
 
         {/* Divider */}
@@ -374,19 +355,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                 unblock & continue
               </button>
             )}
-            {agent.status === "active" && !agent.blocked && (
-              <>
-                <button className="py-2 px-4 bg-transparent border border-border-default text-text-secondary text-[11.5px] font-medium rounded-md cursor-pointer hover:bg-bg-card transition-colors duration-120">
-                  pause
-                </button>
-                <button
-                  onClick={handleQueue}
-                  className="py-2 px-4 bg-transparent border border-border-default text-text-secondary text-[11.5px] font-medium rounded-md cursor-pointer hover:bg-bg-card transition-colors duration-120"
-                >
-                  move to queue
-                </button>
-              </>
-            )}
           </div>
         </div>
       )}
@@ -394,7 +362,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       {/* Compose */}
       <div className="max-w-[680px] mx-auto w-full px-6 pb-4 shrink-0">
         {canCompose ? (
-          <ComposeArea onSend={handleSend} />
+          <ComposeArea onSend={handleSend} emptyThread={agent.messages.length === 0} />
         ) : (
           <div className="border border-border-light rounded-lg px-4 py-3 text-center">
             <span className="font-mono text-[10.5px] text-text-faint">
