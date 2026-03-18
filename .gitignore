@@ -13,6 +13,7 @@ bazel-*
 build/
 out/
 storybook-static/
+target/
 
 # ignore README for publishing
 codex-cli/README.md
