@@ -23,8 +23,9 @@ export default function App() {
 
   useEffect(() => {
     // Best-effort: ensure Codex picks up persisted API keys on app launch.
-    const { openRouterApiKey, azureApiKey } = useSettingsStore.getState();
+    const { openAiApiKey, openRouterApiKey, azureApiKey } = useSettingsStore.getState();
     invoke("codex_set_api_keys", {
+      openai_api_key: openAiApiKey,
       openrouter_api_key: openRouterApiKey,
       azure_api_key: azureApiKey,
     }).catch(() => {});

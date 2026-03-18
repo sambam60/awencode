@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { rpcRequest } from "@/lib/rpc-client";
-import { CURATED_MODELS, useSettingsStore } from "@/lib/stores/settings-store";
+import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
 
 const NAV_ITEMS = [
@@ -154,10 +154,14 @@ function SettingsRow({
 
 function GeneralSection({
 }: {}) {
+  const openAiApiKey = useSettingsStore((s) => s.openAiApiKey);
   const openRouterApiKey = useSettingsStore((s) => s.openRouterApiKey);
   const azureApiKey = useSettingsStore((s) => s.azureApiKey);
   const azureBaseUrl = useSettingsStore((s) => s.azureBaseUrl);
   const azureDeploymentName = useSettingsStore((s) => s.azureDeploymentName);
+  const modelProviderOverrides = useSettingsStore((s) => s.modelProviderOverrides);
+  const setModelProviderOverride = useSettingsStore((s) => s.setModelProviderOverride);
+  const setOpenAiApiKey = useSettingsStore((s) => s.setOpenAiApiKey);
   const setOpenRouterApiKey = useSettingsStore((s) => s.setOpenRouterApiKey);
   const setAzureApiKey = useSettingsStore((s) => s.setAzureApiKey);
   const setAzureBaseUrl = useSettingsStore((s) => s.setAzureBaseUrl);
@@ -168,22 +172,26 @@ function GeneralSection({
   const setModelEnabled = useSettingsStore((s) => s.setModelEnabled);
   const ensureDefaults = useSettingsStore((s) => s.ensureDefaults);
 
+  const [draftOpenAi, setDraftOpenAi] = useState(openAiApiKey);
   const [draftOpenRouter, setDraftOpenRouter] = useState(openRouterApiKey);
   const [draftAzure, setDraftAzure] = useState(azureApiKey);
   const [draftAzureBaseUrl, setDraftAzureBaseUrl] = useState(azureBaseUrl);
   const [draftAzureDeployment, setDraftAzureDeployment] = useState(azureDeploymentName);
   const [applyStatus, setApplyStatus] = useState<"idle" | "applying" | "applied" | "error">("idle");
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   useEffect(() => {
     ensureDefaults();
   }, [ensureDefaults]);
 
+  useEffect(() => setDraftOpenAi(openAiApiKey), [openAiApiKey]);
   useEffect(() => setDraftOpenRouter(openRouterApiKey), [openRouterApiKey]);
   useEffect(() => setDraftAzure(azureApiKey), [azureApiKey]);
   useEffect(() => setDraftAzureBaseUrl(azureBaseUrl), [azureBaseUrl]);
   useEffect(() => setDraftAzureDeployment(azureDeploymentName), [azureDeploymentName]);
 
   const hasKeyChanges =
+    draftOpenAi !== openAiApiKey ||
     draftOpenRouter !== openRouterApiKey ||
     draftAzure !== azureApiKey ||
     draftAzureBaseUrl !== azureBaseUrl ||
@@ -199,7 +207,9 @@ function GeneralSection({
 
   const applyKeys = async () => {
     setApplyStatus("applying");
+    setApplyError(null);
     try {
+      setOpenAiApiKey(draftOpenAi);
       setOpenRouterApiKey(draftOpenRouter);
       setAzureApiKey(draftAzure);
       setAzureBaseUrl(draftAzureBaseUrl);
@@ -209,23 +219,28 @@ function GeneralSection({
       if (azureDeploymentBaseUrl) {
         await rpcRequest("config/batchWrite", {
           edits: [
-            { keyPath: "model_providers.azure.name", value: "Azure", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure.base_url", value: azureDeploymentBaseUrl, mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure.env_key", value: "AZURE_OPENAI_API_KEY", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure.wire_api", value: "responses", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure.query_params.api-version", value: "2025-03-01-preview", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure-openai.name", value: "Azure OpenAI", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure-openai.base_url", value: azureDeploymentBaseUrl, mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure-openai.env_key", value: "AZURE_OPENAI_API_KEY", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure-openai.wire_api", value: "responses", mergeStrategy: "replace" },
+            { keyPath: "model_providers.azure-openai.query_params.api-version", value: "2025-03-01-preview", mergeStrategy: "replace" },
           ],
           reloadUserConfig: true,
         });
       }
 
       await invoke("codex_set_api_keys", {
+        openai_api_key: draftOpenAi,
         openrouter_api_key: draftOpenRouter,
         azure_api_key: draftAzure,
       });
       setApplyStatus("applied");
       window.setTimeout(() => setApplyStatus("idle"), 1200);
-    } catch {
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+      console.error("applyKeys failed", e);
+      setApplyError(msg);
       setApplyStatus("error");
       window.setTimeout(() => setApplyStatus("idle"), 2500);
     }
@@ -242,6 +257,32 @@ function GeneralSection({
 
         <div className="px-4 pb-4">
           <div className="grid gap-3">
+            {/* OpenAI */}
+            <div className="border border-border-light rounded-lg overflow-hidden bg-bg-secondary/40">
+              <div className="px-4 py-3 border-b border-border-light">
+                <div className="text-[13px] font-medium text-text-primary">
+                  OpenAI
+                </div>
+                <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
+                  Required for using OpenAI as a provider.
+                </div>
+              </div>
+              <div className="divide-y divide-border-light">
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
+                    API key
+                  </span>
+                  <input
+                    type="password"
+                    value={draftOpenAi}
+                    onChange={(e) => setDraftOpenAi(e.target.value)}
+                    placeholder="sk-..."
+                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* OpenRouter */}
             <div className="border border-border-light rounded-lg overflow-hidden bg-bg-secondary/40">
               <div className="px-4 py-3 border-b border-border-light">
@@ -321,13 +362,13 @@ function GeneralSection({
         </div>
 
         <div className="px-4 py-3 border-t border-border-light flex items-center justify-between gap-6">
-          <div className="text-[11.5px] text-text-tertiary leading-relaxed">
+          <div className="text-[11.5px] text-text-tertiary leading-relaxed min-w-0">
             {applyStatus === "applied"
               ? "Applied to Codex."
               : applyStatus === "applying"
                 ? "Applying…"
                 : applyStatus === "error"
-                  ? "Couldn’t apply. Try again."
+                  ? (applyError ? `Couldn’t apply: ${applyError}` : "Couldn’t apply. Try again.")
                   : "Apply changes."}
           </div>
           <button
@@ -351,6 +392,17 @@ function GeneralSection({
           {CURATED_MODELS.map((m) => {
             const enabled = enabledModels[m.id];
             const selected = selectedModelId === m.id;
+            const providerOverride = modelProviderOverrides?.[m.id];
+            const effectiveProvider = providerOverride ?? m.provider;
+            const hasAzure = azureDeploymentName.trim().length > 0;
+            const canSwitchProviders = m.id.startsWith("gpt-");
+            const providerOptions = ([
+              { id: "openai", label: "OpenAI", enabled: openAiApiKey.trim().length > 0 },
+              { id: "openrouter", label: "OpenRouter", enabled: openRouterApiKey.trim().length > 0 },
+              { id: "azure-openai", label: "Azure", enabled: hasAzure },
+            ] satisfies Array<{ id: ModelProviderId; label: string; enabled: boolean }>).filter((p) =>
+              !canSwitchProviders ? p.id === m.provider : true,
+            );
             return (
               <div
                 key={m.id}
@@ -370,20 +422,48 @@ function GeneralSection({
                     <span className="text-[13px] font-medium text-text-primary">
                       {m.name}
                     </span>
-                    <span className="font-mono text-[9.5px] uppercase tracking-widest text-text-faint border border-border-light rounded px-1.5 py-0.5">
-                      {m.provider}
-                    </span>
-                    {selected && (
-                      <span className="text-accent-blue font-mono text-[11px]">
-                        ●
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {providerOptions.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          disabled={!p.enabled}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!p.enabled) return;
+                            setModelProviderOverride(m.id, p.id);
+                            if (!enabled) setModelEnabled(m.id, true);
+                            setSelectedModelId(m.id);
+                          }}
+                          className={cn(
+                            "font-mono text-[9.5px] uppercase tracking-widest border rounded px-1.5 py-0.5 transition-colors duration-120 cursor-pointer",
+                            !p.enabled
+                              ? "text-text-faint border-border-light opacity-50 cursor-default"
+                              : p.id === effectiveProvider
+                                ? "text-text-primary border-border-focus bg-bg-secondary"
+                                : "text-text-faint border-border-light hover:bg-bg-secondary",
+                          )}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="text-[11px] text-text-tertiary mt-0.5 truncate">
                     {m.description}
                   </div>
                 </div>
 
+                {/* Default indicator (circle) sits just left of toggle */}
+                <span
+                  className={cn(
+                    "text-[12px] leading-none",
+                    selected ? "text-accent-blue" : "text-transparent",
+                  )}
+                  aria-hidden
+                >
+                  ●
+                </span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

@@ -33,15 +33,17 @@ async fn rpc_notify(
 
 #[tauri::command]
 async fn codex_set_api_keys(
+    openai_api_key: String,
     openrouter_api_key: String,
     azure_api_key: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
 ) -> Result<(), String> {
     let mut bridge = state.lock().await;
+    let openai = (!openai_api_key.trim().is_empty()).then_some(openai_api_key);
     let openrouter = (!openrouter_api_key.trim().is_empty()).then_some(openrouter_api_key);
     let azure = (!azure_api_key.trim().is_empty()).then_some(azure_api_key);
-    bridge.set_api_keys(openrouter, azure);
+    bridge.set_api_keys(openai, openrouter, azure);
     bridge.restart(&app).await
 }
 

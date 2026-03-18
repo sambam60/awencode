@@ -44,6 +44,7 @@ pub struct CodexBridge {
     stdin: Option<tokio::process::ChildStdin>,
     /// Shared with the stdout reader task so it can complete pending requests.
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    openai_api_key: Option<String>,
     openrouter_api_key: Option<String>,
     azure_api_key: Option<String>,
 }
@@ -54,6 +55,7 @@ impl CodexBridge {
             child: None,
             stdin: None,
             pending: Arc::new(Mutex::new(HashMap::new())),
+            openai_api_key: None,
             openrouter_api_key: None,
             azure_api_key: None,
         }
@@ -61,9 +63,11 @@ impl CodexBridge {
 
     pub fn set_api_keys(
         &mut self,
+        openai_api_key: Option<String>,
         openrouter_api_key: Option<String>,
         azure_api_key: Option<String>,
     ) {
+        self.openai_api_key = openai_api_key.filter(|v| !v.trim().is_empty());
         self.openrouter_api_key = openrouter_api_key.filter(|v| !v.trim().is_empty());
         self.azure_api_key = azure_api_key.filter(|v| !v.trim().is_empty());
     }
@@ -88,6 +92,9 @@ impl CodexBridge {
 
         let mut cmd = Command::new(codex_bin);
         cmd.arg("app-server");
+        if let Some(key) = self.openai_api_key.as_deref() {
+            cmd.env("OPENAI_API_KEY", key);
+        }
         if let Some(key) = self.openrouter_api_key.as_deref() {
             cmd.env("OPENROUTER_API_KEY", key);
         }

@@ -12,6 +12,10 @@ export interface CuratedModelOption {
   description: string;
 }
 
+export function isGptFamilyModelId(modelId: string): boolean {
+  return modelId.startsWith("gpt-");
+}
+
 export const CURATED_MODELS: CuratedModelOption[] = [
   {
     id: "gpt-5.4",
@@ -94,6 +98,7 @@ export const CURATED_MODELS: CuratedModelOption[] = [
 ];
 
 interface SettingsState {
+  openAiApiKey: string;
   openRouterApiKey: string;
   azureApiKey: string;
   azureBaseUrl: string;
@@ -101,16 +106,20 @@ interface SettingsState {
 
   /** Selected model (must be enabled; store enforces this). */
   selectedModelId: string;
+  /** Optional per-model provider override (e.g. use azure-openai for GPT models). */
+  modelProviderOverrides: Record<string, ModelProviderId>;
   /** Reasoning effort for turn/start (low|medium|high). */
   selectedReasoningEffort: ReasoningEffort;
   /** Enabled models shown as “available” in the UI. */
   enabledModels: Record<string, boolean>;
 
+  setOpenAiApiKey: (value: string) => void;
   setOpenRouterApiKey: (value: string) => void;
   setAzureApiKey: (value: string) => void;
   setAzureBaseUrl: (value: string) => void;
   setAzureDeploymentName: (value: string) => void;
   setSelectedModelId: (id: string) => void;
+  setModelProviderOverride: (modelId: string, provider: ModelProviderId) => void;
   setSelectedReasoningEffort: (effort: ReasoningEffort) => void;
   setModelEnabled: (id: string, enabled: boolean) => void;
   ensureDefaults: () => void;
@@ -135,14 +144,17 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
       openRouterApiKey: "",
+      openAiApiKey: "",
       azureApiKey: "",
       azureBaseUrl: "",
       azureDeploymentName: "",
 
       selectedModelId: DEFAULT_SELECTED_MODEL,
+      modelProviderOverrides: {},
       selectedReasoningEffort: DEFAULT_REASONING_EFFORT,
       enabledModels: defaultEnabledModels(),
 
+      setOpenAiApiKey: (value) => set({ openAiApiKey: value }),
       setOpenRouterApiKey: (value) => set({ openRouterApiKey: value }),
       setAzureApiKey: (value) => set({ azureApiKey: value }),
       setAzureBaseUrl: (value) => set({ azureBaseUrl: value }),
@@ -157,6 +169,11 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       setSelectedReasoningEffort: (effort) => set({ selectedReasoningEffort: effort }),
+
+      setModelProviderOverride: (modelId, provider) =>
+        set((s) => ({
+          modelProviderOverrides: { ...s.modelProviderOverrides, [modelId]: provider },
+        })),
 
       setModelEnabled: (id, enabled) => {
         const nextEnabled = { ...get().enabledModels, [id]: enabled };
@@ -180,11 +197,13 @@ export const useSettingsStore = create<SettingsState>()(
       name: "awencode-settings",
       version: 1,
       partialize: (s) => ({
+        openAiApiKey: s.openAiApiKey,
         openRouterApiKey: s.openRouterApiKey,
         azureApiKey: s.azureApiKey,
         azureBaseUrl: s.azureBaseUrl,
         azureDeploymentName: s.azureDeploymentName,
         selectedModelId: s.selectedModelId,
+        modelProviderOverrides: s.modelProviderOverrides,
         selectedReasoningEffort: s.selectedReasoningEffort,
         enabledModels: s.enabledModels,
       }),
@@ -193,11 +212,24 @@ export const useSettingsStore = create<SettingsState>()(
 );
 
 export function getSelectedModel(): CuratedModelOption {
-  const { selectedModelId } = useSettingsStore.getState();
-  return (
-    CURATED_MODELS.find((m) => m.id === selectedModelId) ??
-    CURATED_MODELS[0]
-  );
+  const { selectedModelId, modelProviderOverrides, azureDeploymentName } =
+    useSettingsStore.getState();
+  const base =
+    CURATED_MODELS.find((m) => m.id === selectedModelId) ?? CURATED_MODELS[0];
+
+  const override = modelProviderOverrides[selectedModelId];
+  const provider = override ?? base.provider;
+
+  // Translate model id for provider-specific routing
+  if (provider === "openrouter" && isGptFamilyModelId(base.id)) {
+    return { ...base, provider, id: `openai/${base.id}` };
+  }
+  if (provider === "azure-openai" && isGptFamilyModelId(base.id)) {
+    const deployment = azureDeploymentName.trim();
+    return { ...base, provider, id: deployment || base.id };
+  }
+
+  return { ...base, provider };
 }
 
 export function getSelectedReasoningEffort(): ReasoningEffort {

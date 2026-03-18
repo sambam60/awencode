@@ -414,7 +414,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         const selected = getSelectedModel();
         const res = await rpcRequest<{ thread: { id: string } }>("thread/start", {
           cwd: projectPath ?? undefined,
-          model: selected?.id,
+          model: selected.id,
           modelProvider: selected?.provider,
         });
         threadId = res?.thread?.id;
