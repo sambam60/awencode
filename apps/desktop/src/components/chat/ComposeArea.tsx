@@ -1,7 +1,16 @@
-import { useState, useRef, useCallback } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useLayoutEffect,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { createPortal } from "react-dom";
 import { Plus, ChevronDown, Mic, ArrowUp, X, Image } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/lib/stores/app-store";
 import {
   AWENCODE_FILE_PATH_MIME,
   AWENCODE_FILE_KIND_MIME,
@@ -41,6 +50,76 @@ const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
 const EMPTY_THREAD_PLACEHOLDER = "Ask anything, @ to add files, / for commands";
 const FOLLOW_UP_PLACEHOLDER = "Ask for follow-up changes";
 
+/** Escape chat column overflow + keep theme tokens (`.dark` is on App, not `html`). */
+function GlassMenuPortal({
+  open,
+  anchorRef,
+  onClose,
+  widthPx,
+  widthClass,
+  themeDark,
+  children,
+}: {
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  widthPx: number;
+  widthClass: string;
+  themeDark: boolean;
+  children: ReactNode;
+}) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setRect(null);
+      return;
+    }
+    const update = () => {
+      if (anchorRef.current) {
+        setRect(anchorRef.current.getBoundingClientRect());
+      }
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, anchorRef]);
+
+  if (typeof document === "undefined" || !open || !rect) {
+    return null;
+  }
+
+  const maxH = Math.min(256, Math.max(80, rect.top - 12));
+  const left = Math.min(rect.left, window.innerWidth - widthPx - 8);
+
+  const bottom = window.innerHeight - rect.top + 4;
+
+  return createPortal(
+    <div className={cn(themeDark && "dark")}>
+      <div className="fixed inset-0 z-[90]" onClick={onClose} aria-hidden />
+      <div
+        className={cn(
+          "fixed z-[100] rounded-lg glass-overlay",
+          widthClass,
+        )}
+        style={{ left, bottom }}
+      >
+        <div
+          className="overflow-y-auto overscroll-contain rounded-lg"
+          style={{ maxHeight: maxH }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAreaProps) {
   const [value, setValue] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
@@ -50,6 +129,9 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composeRootRef = useRef<HTMLDivElement>(null);
+  const modelAnchorRef = useRef<HTMLButtonElement>(null);
+  const reasoningAnchorRef = useRef<HTMLButtonElement>(null);
+  const themeDark = useAppStore((s) => s.theme === "dark");
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
@@ -335,68 +417,87 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
           </button>
           <div className="relative">
             <button
+              ref={modelAnchorRef}
               type="button"
-              onClick={() => setModelOpen((v) => !v)}
+              onClick={() => {
+                setReasoningOpen(false);
+                setModelOpen((v) => !v);
+              }}
               disabled={disabled}
               className="flex items-center gap-1 text-[12px] text-text-secondary hover:text-text-primary font-medium rounded-md py-1.5 px-2 transition-colors duration-120 cursor-pointer disabled:opacity-50"
             >
               {selectedModel.name}
               <ChevronDown size={12} className="text-text-tertiary" />
             </button>
-            {modelOpen && (
-              <>
-                <div className="absolute left-0 bottom-full mb-1 w-56 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 py-1 max-h-64 overflow-y-auto">
-                  {enabledModelList.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      className={cn(
-                        "w-full text-left px-3 py-2 text-[12px] hover:bg-bg-secondary transition-colors duration-120",
-                        m.id === selectedModelId ? "text-text-primary font-medium" : "text-text-secondary",
-                      )}
-                      onClick={() => {
-                        setSelectedModelId(m.id);
-                        setModelOpen(false);
-                      }}
-                    >
-                      {m.name}
-                    </button>
-                  ))}
-                </div>
-                <div className="fixed inset-0 z-40" onClick={() => setModelOpen(false)} />
-              </>
-            )}
+            <GlassMenuPortal
+              open={modelOpen}
+              anchorRef={modelAnchorRef}
+              onClose={() => setModelOpen(false)}
+              widthPx={224}
+              widthClass="w-56"
+              themeDark={themeDark}
+            >
+              {enabledModelList.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={cn(
+                    "w-full text-left px-3 py-2 text-[12px] glass-menu-row outline-none",
+                    m.id === selectedModelId
+                      ? "glass-menu-row-active text-text-primary font-medium"
+                      : "text-text-secondary",
+                  )}
+                  onClick={() => {
+                    setSelectedModelId(m.id);
+                    setModelOpen(false);
+                  }}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </GlassMenuPortal>
           </div>
           <div className="relative">
             <button
+              ref={reasoningAnchorRef}
               type="button"
-              onClick={() => setReasoningOpen((v) => !v)}
+              onClick={() => {
+                setModelOpen(false);
+                setReasoningOpen((v) => !v);
+              }}
               disabled={disabled}
               className="flex items-center gap-1 text-[12px] text-text-secondary hover:text-text-primary font-medium rounded-md py-1.5 px-2 transition-colors duration-120 cursor-pointer disabled:opacity-50"
             >
               {REASONING_LEVELS.find((r) => r.id === selectedReasoningEffort)?.label ?? "medium"}
               <ChevronDown size={12} className="text-text-tertiary" />
             </button>
-            {reasoningOpen && (
-              <>
-                <div className="absolute left-0 bottom-full mb-1 w-40 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 py-1">
-                  {REASONING_LEVELS.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-[12px] text-text-primary hover:bg-bg-secondary transition-colors duration-120"
-                      onClick={() => {
-                        setSelectedReasoningEffort(c.id);
-                        setReasoningOpen(false);
-                      }}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="fixed inset-0 z-40" onClick={() => setReasoningOpen(false)} />
-              </>
-            )}
+            <GlassMenuPortal
+              open={reasoningOpen}
+              anchorRef={reasoningAnchorRef}
+              onClose={() => setReasoningOpen(false)}
+              widthPx={160}
+              widthClass="w-40"
+              themeDark={themeDark}
+            >
+              {REASONING_LEVELS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={cn(
+                    "w-full text-left px-3 py-2 text-[12px] glass-menu-row outline-none",
+                    c.id === selectedReasoningEffort
+                      ? "glass-menu-row-active text-text-primary font-medium"
+                      : "text-text-secondary",
+                  )}
+                  onClick={() => {
+                    setSelectedReasoningEffort(c.id);
+                    setReasoningOpen(false);
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </GlassMenuPortal>
           </div>
           <div className="flex-1 min-w-0" />
           <button

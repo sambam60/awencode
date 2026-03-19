@@ -877,7 +877,7 @@ function GitButton({
         <ChevronDown size={9} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
+        <div className="absolute right-0 top-full mt-1.5 w-52 rounded-lg glass-overlay z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-border-light">
             <div className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest mb-0.5">
               current branch
@@ -895,7 +895,7 @@ function GitButton({
               setCreateBranchOpen(true);
               setGitError(null);
             }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+            className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
           >
             <GitFork size={12} className="text-text-faint shrink-0" />
             <span className="text-[12px] text-text-primary">Create branch</span>
@@ -906,22 +906,22 @@ function GitButton({
               setCommitOpen(true);
               setGitError(null);
             }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+            className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
           >
             <GitCommit size={12} className="text-text-faint shrink-0" />
             <span className="text-[12px] text-text-primary">Commit</span>
           </button>
           <button
             onClick={handlePush}
-            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+            className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
           >
             <CloudUpload size={12} className="text-text-faint shrink-0" />
             <span className="text-[12px] text-text-primary">Push</span>
           </button>
-          <div className="border-t border-border-light my-1" />
+          <div className="border-t border-border-light" role="separator" />
           <button
             onClick={handleCreatePR}
-            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+            className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
           >
             <img
               src="/octicon.svg"
@@ -1127,7 +1127,7 @@ function OpenInButton() {
         <ChevronDown size={9} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-44 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
+        <div className="absolute right-0 top-full mt-1.5 w-44 rounded-lg glass-overlay z-50 overflow-hidden">
           {displayApps.map((app) => {
             const Icon = APP_ICON_MAP[app.id.toLowerCase()] ?? Box;
             const iconDataUrl = appIcons[app.id];
@@ -1136,7 +1136,7 @@ function OpenInButton() {
                 key={app.id}
                 onClick={() => handleOpenIn(app.id)}
                 disabled={!projectPath}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left disabled:opacity-50 disabled:cursor-default"
+                className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none disabled:opacity-50 disabled:cursor-default"
               >
                 {iconDataUrl ? (
                   <img
@@ -1184,13 +1184,13 @@ function DiffButton({ fileCount }: { fileCount: number }) {
         )}
       </button>
       {open && fileCount > 0 && (
-        <div className="absolute right-0 top-full mt-1.5 w-64 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1.5 w-64 rounded-lg glass-overlay z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-border-light">
             <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">
               Changed Files
             </span>
           </div>
-          <div className="py-1 max-h-64 overflow-y-auto">
+          <div className="max-h-64 overflow-y-auto">
             <div className="px-3 py-2 text-center">
               <span className="font-mono text-[11px] text-text-faint">
                 diff viewer coming soon
