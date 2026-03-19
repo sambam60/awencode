@@ -1116,6 +1116,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
   const projectPath = useAppStore((s) => s.projectPath);
+  const appProjectName = useAppStore((s) => s.projectName);
   const setProjectPath = useAppStore((s) => s.setProjectPath);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
@@ -1444,7 +1445,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               setProjectPath(null);
               setView("home");
             }}
-            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Home"
           >
             <img
@@ -1456,7 +1457,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={() => setView("settings")}
-            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Settings"
           >
             <img
@@ -1468,21 +1469,44 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={handleNewChat}
-            className="p-1.5 rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
             title="New chat (adds to Active)"
           >
             <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1 p-1.5 rounded text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120"
+            title="Back to board"
+          >
+            <ChevronLeft size={12} className="shrink-0" strokeWidth={2} />
+            <span className="font-sans text-[10px] leading-none">Back</span>
           </button>
         </div>
 
         <div className="h-4 w-px bg-border-light shrink-0" />
 
         <div className="flex items-center gap-2 min-w-0 flex-1">
+          {appProjectName ? (
+            <>
+              <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate max-w-[min(200px,30vw)] shrink min-w-0">
+                {appProjectName}
+              </span>
+              <span
+                className="font-sans text-[13px] font-medium text-text-tertiary tracking-[-0.01em] leading-tight shrink-0"
+                aria-hidden
+              >
+                /
+              </span>
+            </>
+          ) : null}
           <span
             className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
             style={{ background: accent }}
+            aria-hidden
           />
-          <span className="text-[13px] font-medium text-text-primary tracking-[-0.01em] truncate">
+          <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate min-w-0">
             {agent.title}
           </span>
         </div>
@@ -1558,17 +1582,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             onBranchCreated={(b) => updateAgentGitInfo(agent.id, { branch: b })}
           />
         </div>
-
-        <div className="h-4 w-px bg-border-light shrink-0" />
-
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120 shrink-0"
-        >
-          <ChevronLeft size={12} />
-          <span className="font-sans text-[10px]">Back</span>
-        </button>
       </div>
 
       {/* Content area — chat with overlaying file tree */}
