@@ -2324,6 +2324,39 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
+        // Azure OpenAI preview `api-version` values are not stable over time.
+        // If a user has an older stored config, Azure will respond with:
+        // `BadRequest: API version not supported`.
+        //
+        // To reduce churn, we migrate a known older value to a known-supported one.
+        for provider in model_providers.values_mut() {
+            let name_lower = provider.name.to_ascii_lowercase();
+            let base_lower = provider
+                .base_url
+                .as_ref()
+                .map(|b| b.to_ascii_lowercase())
+                .unwrap_or_default();
+
+            let looks_like_azure = name_lower.starts_with("azure ")
+                || base_lower.contains("openai.azure.")
+                || base_lower.contains("cognitiveservices.azure.")
+                || base_lower.contains("aoai.azure.")
+                || base_lower.contains("azure-api.")
+                || base_lower.contains("windows.net/openai");
+
+            if looks_like_azure {
+                if let Some(query_params) = provider.query_params.as_mut() {
+                    if let Some(api_version) = query_params.get_mut("api-version") {
+                        if api_version.as_str() == "2025-03-01-preview"
+                            || api_version.as_str() == "2025-04-01-preview"
+                        {
+                            *api_version = "preview".to_string();
+                        }
+                    }
+                }
+            }
+        }
+
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
             .or(cfg.model_provider)

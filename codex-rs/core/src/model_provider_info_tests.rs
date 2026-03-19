@@ -34,7 +34,7 @@ fn test_deserialize_azure_model_provider_toml() {
 name = "Azure"
 base_url = "https://xxxxx.openai.azure.com/openai"
 env_key = "AZURE_OPENAI_API_KEY"
-query_params = { api-version = "2025-04-01-preview" }
+query_params = { api-version = "preview" }
         "#;
     let expected_provider = ModelProviderInfo {
         name: "Azure".into(),
@@ -44,7 +44,7 @@ query_params = { api-version = "2025-04-01-preview" }
         experimental_bearer_token: None,
         wire_api: WireApi::Responses,
         query_params: Some(maplit::hashmap! {
-            "api-version".to_string() => "2025-04-01-preview".to_string(),
+            "api-version".to_string() => "preview".to_string(),
         }),
         http_headers: None,
         env_http_headers: None,

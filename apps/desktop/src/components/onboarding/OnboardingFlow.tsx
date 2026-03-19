@@ -50,7 +50,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           <img
             src="/awencode_logo.svg"
             alt="awencode"
-            className="h-10"
+            className="h-10 dark:invert"
           />
           <div className="w-px h-8 bg-border" />
           <button

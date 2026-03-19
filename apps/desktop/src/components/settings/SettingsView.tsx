@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
-import { rpcRequest } from "@/lib/rpc-client";
+import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -197,12 +197,40 @@ function GeneralSection({
     draftAzureBaseUrl !== azureBaseUrl ||
     draftAzureDeployment !== azureDeploymentName;
 
-  const computeAzureDeploymentBaseUrl = () => {
-    const base = draftAzureBaseUrl.trim().replace(/\/+$/, "");
-    const deployment = draftAzureDeployment.trim();
-    if (!base || !deployment) return null;
-    if (base.includes("/deployments/")) return base;
-    return `${base}/deployments/${encodeURIComponent(deployment)}`;
+  const computeAzureResponsesBaseUrl = () => {
+    // Azure Responses API expects the model/deployment name in the request body (field: `model`),
+    // and does not require `/deployments/<deployment>` to be embedded in the URL path.
+    //
+    // We normalize a few common user inputs:
+    // - `https://<resource>.openai.azure.com` -> `.../openai/v1`
+    // - `.../openai` -> `.../openai/v1`
+    // - `.../openai/deployments/<deployment>` -> `.../openai/v1`
+    const raw = draftAzureBaseUrl.trim().replace(/\/+$/, "");
+    if (!raw) return null;
+
+    const baseLower = raw.toLowerCase();
+
+    // If user pasted the deployment-specific path, strip it back to the resource's /openai prefix.
+    const deploymentPathMarker = "/openai/deployments/";
+    if (baseLower.includes(deploymentPathMarker)) {
+      const prefix = raw.slice(0, baseLower.indexOf(deploymentPathMarker)).replace(/\/+$/, "");
+      return `${prefix}/v1`;
+    }
+
+    if (!baseLower.includes("/openai")) {
+      return `${raw}/openai/v1`;
+    }
+
+    if (baseLower.endsWith("/openai")) {
+      return `${raw}/v1`;
+    }
+
+    // If already using /openai/v1, keep it.
+    if (baseLower.endsWith("/openai/v1")) return raw;
+    if (baseLower.includes("/openai/v1/")) return raw;
+
+    // Fall back to whatever user provided; the request will 404 if it doesn't match Azure's expectations.
+    return raw;
   };
 
   const applyKeys = async () => {
@@ -215,8 +243,8 @@ function GeneralSection({
       setAzureBaseUrl(draftAzureBaseUrl);
       setAzureDeploymentName(draftAzureDeployment);
 
-      const azureDeploymentBaseUrl = computeAzureDeploymentBaseUrl();
-      if (azureDeploymentBaseUrl) {
+      const azureResponsesBaseUrl = computeAzureResponsesBaseUrl();
+      if (azureResponsesBaseUrl) {
         await rpcRequest("config/batchWrite", {
           edits: [
             {
@@ -226,7 +254,7 @@ function GeneralSection({
             },
             {
               keyPath: "model_providers.azure-openai-custom.base_url",
-              value: azureDeploymentBaseUrl,
+              value: azureResponsesBaseUrl,
               mergeStrategy: "replace",
             },
             {
@@ -241,7 +269,7 @@ function GeneralSection({
             },
             {
               keyPath: "model_providers.azure-openai-custom.query_params.api-version",
-              value: "2025-03-01-preview",
+              value: "preview",
               mergeStrategy: "replace",
             },
           ],
@@ -348,7 +376,7 @@ function GeneralSection({
                     type="url"
                     value={draftAzureBaseUrl}
                     onChange={(e) => setDraftAzureBaseUrl(e.target.value)}
-                    placeholder="https://<resource>.openai.azure.com/openai"
+                    placeholder="https://<resource>.openai.azure.com/openai/v1"
                     className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
                   />
                 </div>
@@ -384,7 +412,7 @@ function GeneralSection({
         <div className="px-4 py-3 border-t border-border-light flex items-center justify-between gap-6">
           <div className="text-[11.5px] text-text-tertiary leading-relaxed min-w-0">
             {applyStatus === "applied"
-              ? "Applied to Codex."
+              ? "Applied to awencode."
               : applyStatus === "applying"
                 ? "Applying…"
                 : applyStatus === "error"
@@ -564,6 +592,7 @@ interface McpServerEntry {
   name: string;
   tools?: Record<string, unknown>;
   authStatus?: string;
+  enabled?: boolean;
 }
 
 type McpTransportType = "stdio" | "streamable_http";
@@ -584,6 +613,7 @@ type McpServerDraft =
       bearerTokenEnvVar: string;
       httpHeaders: KvRow[];
       envHttpHeaders: KvRow[];
+      enabled: boolean;
     }
   | {
       mode: "edit";
@@ -598,6 +628,7 @@ type McpServerDraft =
       bearerTokenEnvVar: string;
       httpHeaders: KvRow[];
       envHttpHeaders: KvRow[];
+      enabled: boolean;
     };
 
 function normalizeServerName(raw: string): string {
@@ -640,6 +671,7 @@ function buildEmptyDraft(mode: "create" | "edit", name = ""): McpServerDraft {
     bearerTokenEnvVar: "",
     httpHeaders: [{ key: "", value: "" }],
     envHttpHeaders: [{ key: "", value: "" }],
+    enabled: true,
   };
 }
 
@@ -719,6 +751,7 @@ async function readMcpServerConfigFromEffectiveConfig(
             }))
           : [],
       ),
+      enabled: typeof obj.enabled === "boolean" ? obj.enabled : true,
     };
   } catch {
     return null;
@@ -909,9 +942,13 @@ function McpServerModal({
               http_headers: rowsToRecord(draft.httpHeaders),
               env_http_headers: rowsToRecord(draft.envHttpHeaders),
             };
+      const valueWithEnabled = {
+        ...value,
+        enabled: draft.enabled,
+      };
 
       await rpcRequest("config/batchWrite", {
-        edits: [{ keyPath, value, mergeStrategy: "replace" }],
+        edits: [{ keyPath, value: valueWithEnabled, mergeStrategy: "replace" }],
         reloadUserConfig: true,
       });
       await rpcRequest("config/mcpServer/reload", {});
@@ -949,7 +986,7 @@ function McpServerModal({
       title={isCreate ? "Add MCP server" : `Update ${name}`}
       description={
         isCreate
-          ? "Add a custom MCP server to your Codex configuration."
+          ? "Add a custom MCP server to your awencode configuration."
           : "Edits are written to your user config.toml and applied after reload."
       }
       onClose={onClose}
@@ -1143,12 +1180,33 @@ function McpSection() {
   const [servers, setServers] = useState<McpServerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalDraft, setModalDraft] = useState<McpServerDraft | null>(null);
+  const [oauthStatusByServer, setOauthStatusByServer] = useState<Record<string, string>>({});
+  const [busyServer, setBusyServer] = useState<string | null>(null);
 
   const refresh = () => {
     setLoading(true);
-    rpcRequest<{ data?: McpServerEntry[] }>("mcpServerStatus/list", {})
-      .then((res) => {
-        if (Array.isArray(res?.data)) setServers(res.data);
+    Promise.all([
+      rpcRequest<{ data?: McpServerEntry[] }>("mcpServerStatus/list", {}),
+      rpcRequest<{ config?: Record<string, unknown> }>("config/read", {}),
+    ])
+      .then(([statusRes, configRes]) => {
+        const listed = Array.isArray(statusRes?.data) ? statusRes.data : [];
+        const config = configRes?.config ?? {};
+        const mcpServersRaw =
+          (config as Record<string, unknown>)["mcp_servers"] &&
+          typeof (config as Record<string, unknown>)["mcp_servers"] === "object"
+            ? ((config as Record<string, unknown>)["mcp_servers"] as Record<string, unknown>)
+            : {};
+
+        const merged = listed.map((server) => {
+          const cfg = mcpServersRaw[server.name];
+          const enabled =
+            cfg && typeof cfg === "object" && typeof (cfg as Record<string, unknown>).enabled === "boolean"
+              ? Boolean((cfg as Record<string, unknown>).enabled)
+              : true;
+          return { ...server, enabled };
+        });
+        setServers(merged);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -1157,6 +1215,78 @@ function McpSection() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    onNotification((payload: string) => {
+      try {
+        const msg = JSON.parse(payload) as {
+          method?: string;
+          params?: { name?: string; success?: boolean; error?: string };
+        };
+        if (msg.method !== "mcpServer/oauthLogin/completed") return;
+        const name = msg.params?.name;
+        if (!name) return;
+        if (msg.params?.success) {
+          setOauthStatusByServer((s) => ({ ...s, [name]: "Connected." }));
+          refresh();
+        } else {
+          const err = msg.params?.error?.trim();
+          setOauthStatusByServer((s) => ({
+            ...s,
+            [name]: err ? `Login failed: ${err}` : "Login failed.",
+          }));
+        }
+      } catch {
+        // Ignore malformed notifications.
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const setServerEnabled = async (name: string, enabled: boolean) => {
+    setBusyServer(name);
+    try {
+      await rpcRequest("config/batchWrite", {
+        edits: [{ keyPath: `mcp_servers.${name}.enabled`, value: enabled, mergeStrategy: "replace" }],
+        reloadUserConfig: true,
+      });
+      await rpcRequest("config/mcpServer/reload", {});
+      await refresh();
+    } finally {
+      setBusyServer(null);
+    }
+  };
+
+  const connectServer = async (name: string) => {
+    setBusyServer(name);
+    setOauthStatusByServer((s) => ({ ...s, [name]: "Opening login…" }));
+    try {
+      const res = await rpcRequest<{ authorizationUrl?: string }>("mcpServer/oauth/login", {
+        name,
+      });
+      const url = res?.authorizationUrl;
+      if (!url) {
+        setOauthStatusByServer((s) => ({ ...s, [name]: "Could not start login." }));
+        return;
+      }
+      await invoke("open_url", { url });
+      setOauthStatusByServer((s) => ({ ...s, [name]: "Complete login in browser…" }));
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Could not start login.";
+      setOauthStatusByServer((s) => ({ ...s, [name]: msg }));
+    } finally {
+      setBusyServer(null);
+    }
+  };
 
   return (
     <div>
@@ -1199,10 +1329,56 @@ function McpSection() {
                 role="button"
                 tabIndex={0}
               >
-                <span className="text-[13px] text-text-primary">{server.name}</span>
-                <span className="font-mono text-[10px] text-text-faint">
-                  {server.authStatus ?? "—"}
-                </span>
+                <div className="min-w-0">
+                  <div className="text-[13px] text-text-primary">{server.name}</div>
+                  <div className="text-[11px] text-text-tertiary mt-0.5">
+                    {oauthStatusByServer[server.name] ?? " "}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] text-text-faint">
+                    {server.authStatus ?? "—"}
+                  </span>
+                  {server.authStatus === "notLoggedIn" && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        connectServer(server.name);
+                      }}
+                      disabled={busyServer === server.name}
+                      className={cn(
+                        "px-2 py-1 rounded border text-[10.5px] font-medium transition-colors duration-120 cursor-pointer",
+                        busyServer === server.name
+                          ? "border-border-light text-text-faint cursor-default"
+                          : "border-border-light text-text-secondary hover:text-text-primary hover:border-border-focus",
+                      )}
+                    >
+                      Connect
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void setServerEnabled(server.name, !(server.enabled ?? true));
+                    }}
+                    disabled={busyServer === server.name}
+                    className={cn(
+                      "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors duration-150 shrink-0",
+                      server.enabled ?? true
+                        ? "bg-[var(--toggle-on)] border-[var(--toggle-on)]"
+                        : "bg-bg-secondary border-border",
+                      busyServer === server.name && "opacity-60",
+                    )}
+                    aria-label={`${(server.enabled ?? true) ? "Disable" : "Enable"} ${server.name}`}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 rounded-full bg-[var(--toggle-knob)] shadow-sm transition-transform duration-150",
+                        (server.enabled ?? true) ? "translate-x-[17px]" : "translate-x-[1px]",
+                      )}
+                    />
+                  </button>
+                </div>
               </div>
             ))
           )}

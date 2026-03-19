@@ -124,9 +124,13 @@ impl CodexBridge {
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(&line) {
-                    if let Some(_method) = msg.method {
+                    if msg.method.is_some() {
+                        // Server notification or server request (both have method).
+                        // Server requests also carry an id — the frontend can
+                        // inspect that and respond via rpc_notify/rpc_request.
                         let _ = handle.emit("codex:notification", &line);
                     } else if let Some(id) = msg.id {
+                        // Response to a client-initiated request.
                         let result = match msg.error {
                             Some(e) => Err(e.message),
                             None => msg
@@ -202,6 +206,31 @@ impl CodexBridge {
 
         let mut payload =
             serde_json::to_string(&req).map_err(|e| format!("Serialize error: {e}"))?;
+        payload.push('\n');
+
+        let stdin = self.stdin.as_mut().ok_or("Bridge not started")?;
+        stdin
+            .write_all(payload.as_bytes())
+            .await
+            .map_err(|e| format!("Write error: {e}"))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Flush error: {e}"))?;
+
+        Ok(())
+    }
+
+    /// Send a JSON-RPC response back to the app-server for a server request.
+    pub async fn respond(&mut self, id: u64, result: Value) -> Result<(), String> {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        });
+
+        let mut payload =
+            serde_json::to_string(&response).map_err(|e| format!("Serialize error: {e}"))?;
         payload.push('\n');
 
         let stdin = self.stdin.as_mut().ok_or("Bridge not started")?;

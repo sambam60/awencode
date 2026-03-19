@@ -115,7 +115,7 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
         <div className="w-[340px]">
           {/* Logo */}
           <div className="flex items-center justify-center mb-8">
-            <img src="/awencode_logo.svg" alt="awencode" className="h-16" />
+            <img src="/awencode_logo.svg" alt="awencode" className="h-16 dark:invert" />
           </div>
 
           {/* Action buttons */}

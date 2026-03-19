@@ -323,19 +323,19 @@ fn create_openrouter_provider() -> ModelProviderInfo {
 fn create_azure_openai_provider() -> ModelProviderInfo {
     ModelProviderInfo {
         name: "Azure OpenAI".into(),
-        // Users must override base_url in config.toml with their deployment endpoint, e.g.:
-        // https://{resource}.openai.azure.com/openai/deployments/{deployment}
+        // Users must override base_url in config.toml with their Responses API endpoint, e.g.:
+        // https://{resource}.openai.azure.com/openai/v1
         base_url: None,
         env_key: Some("AZURE_OPENAI_API_KEY".into()),
         env_key_instructions: Some(
             "Set AZURE_OPENAI_API_KEY and configure base_url in config.toml to \
-             https://<resource>.openai.azure.com/openai/deployments/<deployment>"
+             https://<resource>.openai.azure.com/openai/v1"
                 .into(),
         ),
         experimental_bearer_token: None,
         wire_api: WireApi::Responses,
         query_params: Some(
-            [("api-version".to_string(), "2025-03-01-preview".to_string())]
+            [("api-version".to_string(), "preview".to_string())]
                 .into_iter()
                 .collect(),
         ),

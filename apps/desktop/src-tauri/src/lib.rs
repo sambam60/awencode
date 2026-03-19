@@ -41,6 +41,19 @@ async fn rpc_notify(
 }
 
 #[tauri::command]
+async fn rpc_respond(
+    id: u64,
+    result: serde_json::Value,
+    state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
+) -> Result<(), String> {
+    let mut bridge = state.lock().await;
+    bridge
+        .respond(id, result)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn codex_set_api_keys(
     openai_api_key: String,
     openrouter_api_key: String,
@@ -375,6 +388,128 @@ async fn get_git_info(path: String) -> Result<GitInfoResult, String> {
     })
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FileStatusEntry {
+    path: String,
+    status: String,
+}
+
+#[tauri::command]
+async fn get_git_file_status(path: String) -> Result<Vec<FileStatusEntry>, String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain=v1", "-uall"])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err("git status failed".to_string());
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut entries = Vec::new();
+        for line in stdout.lines() {
+            if line.len() < 4 {
+                continue;
+            }
+            let xy = &line[..2];
+            let file_path = line[3..].to_string();
+            let status = match xy.trim() {
+                "M" | "MM" | "AM" => "M",
+                "A" => "A",
+                "D" => "D",
+                "R" => "R",
+                "C" => "C",
+                "??" => "U",
+                "!" | "!!" => "!",
+                s if s.starts_with('M') => "M",
+                s if s.starts_with('A') => "A",
+                s if s.starts_with('D') => "D",
+                s if s.starts_with('R') => "R",
+                _ => "M",
+            };
+            entries.push(FileStatusEntry {
+                path: file_path,
+                status: status.to_string(),
+            });
+        }
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DirEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Option<Vec<DirEntry>>,
+}
+
+#[tauri::command]
+async fn list_directory_tree(path: String, depth: Option<u32>) -> Result<Vec<DirEntry>, String> {
+    let root = std::path::PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    let max_depth = depth.unwrap_or(1);
+    tokio::task::spawn_blocking(move || build_dir_tree(&root, &root, 0, max_depth))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn build_dir_tree(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    current_depth: u32,
+    max_depth: u32,
+) -> Result<Vec<DirEntry>, String> {
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+    for entry in read_dir {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" || name == "dist" || name == "build" {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let is_dir = file_type.is_dir();
+        let rel_path = entry
+            .path()
+            .strip_prefix(base)
+            .unwrap_or(&entry.path())
+            .to_string_lossy()
+            .to_string();
+        let children = if is_dir && current_depth < max_depth {
+            Some(build_dir_tree(base, &entry.path(), current_depth + 1, max_depth)?)
+        } else if is_dir {
+            Some(Vec::new())
+        } else {
+            None
+        };
+        entries.push(DirEntry {
+            name,
+            path: rel_path,
+            is_dir,
+            children,
+        });
+    }
+    entries.sort_by(|a, b| {
+        match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+    Ok(entries)
+}
+
 #[tauri::command]
 async fn git_commit(path: String, message: String) -> Result<(), String> {
     let path = std::path::PathBuf::from(&path);
@@ -523,6 +658,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             rpc_request,
             rpc_notify,
+            rpc_respond,
             codex_set_api_keys,
             git_clone,
             git_create_branch,
@@ -531,6 +667,8 @@ pub fn run() {
             resolve_app_icon,
             open_url,
             get_git_info,
+            get_git_file_status,
+            list_directory_tree,
             git_commit,
             git_push,
         ])

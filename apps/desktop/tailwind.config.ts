@@ -22,6 +22,7 @@ const config: Config = {
           secondary: "var(--text-secondary)",
           tertiary: "var(--text-tertiary)",
           faint: "var(--text-faint)",
+          links: "var(--text-links)",
         },
         accent: {
           blue: "var(--accent-blue)",
@@ -82,6 +83,31 @@ const config: Config = {
         "120": "120ms",
         "150": "150ms",
         "200": "200ms",
+      },
+      keyframes: {
+        fadeInReasoning: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        shimmerAi: {
+          "0%": { backgroundPosition: "100% 0" },
+          "100%": { backgroundPosition: "0% 0" },
+        },
+        "collapsible-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-collapsible-content-height)" },
+        },
+        "collapsible-up": {
+          from: { height: "var(--radix-collapsible-content-height)" },
+          to: { height: "0" },
+        },
+      },
+      animation: {
+        "fade-in-reasoning": "fadeInReasoning 0.35s ease-out both",
+        "shimmer-ai":
+          "shimmerAi var(--shimmer-ai-duration, 2.8s) linear infinite",
+        "collapsible-down": "collapsible-down 0.2s ease-out",
+        "collapsible-up": "collapsible-up 0.2s ease-out",
       },
     },
   },

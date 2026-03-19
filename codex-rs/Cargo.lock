@@ -666,28 +666,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-stream"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
-dependencies = [
- "async-stream-impl",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-stream-impl"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1325,24 +1303,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-app-server-client"
-version = "0.0.0"
-dependencies = [
- "codex-app-server",
- "codex-app-server-protocol",
- "codex-arg0",
- "codex-core",
- "codex-feedback",
- "codex-protocol",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tokio",
- "toml 0.9.11+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
 name = "codex-app-server-protocol"
 version = "0.0.0"
 dependencies = [
@@ -1692,26 +1652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-execpolicy-legacy"
-version = "0.0.0"
-dependencies = [
- "allocative",
- "anyhow",
- "clap",
- "derive_more 2.1.1",
- "env_logger",
- "log",
- "multimap",
- "path-absolutize",
- "regex-lite",
- "serde",
- "serde_json",
- "serde_with",
- "starlark",
- "tempfile",
-]
-
-[[package]]
 name = "codex-experimental-api-macros"
 version = "0.0.0"
 dependencies = [
@@ -1812,19 +1752,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-lmstudio"
-version = "0.0.0"
-dependencies = [
- "codex-core",
- "reqwest",
- "serde_json",
- "tokio",
- "tracing",
- "which",
- "wiremock",
-]
-
-[[package]]
 name = "codex-login"
 version = "0.0.0"
 dependencies = [
@@ -1848,33 +1775,6 @@ dependencies = [
  "url",
  "urlencoding",
  "webbrowser",
- "wiremock",
-]
-
-[[package]]
-name = "codex-mcp-server"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "codex-arg0",
- "codex-core",
- "codex-protocol",
- "codex-shell-command",
- "codex-utils-cli",
- "codex-utils-json-to-toml",
- "core_test_support",
- "mcp_test_support",
- "os_info",
- "pretty_assertions",
- "rmcp",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "shlex",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "wiremock",
 ]
 
@@ -1907,24 +1807,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "codex-ollama"
-version = "0.0.0"
-dependencies = [
- "assert_matches",
- "async-stream",
- "bytes",
- "codex-core",
- "futures",
- "pretty_assertions",
- "reqwest",
- "semver",
- "serde_json",
- "tokio",
- "tracing",
- "wiremock",
 ]
 
 [[package]]
@@ -2183,10 +2065,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-utils-elapsed"
-version = "0.0.0"
-
-[[package]]
 name = "codex-utils-home-dir"
 version = "0.0.0"
 dependencies = [
@@ -2214,15 +2092,6 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "toml 0.9.11+spec-1.1.0",
-]
-
-[[package]]
-name = "codex-utils-oss"
-version = "0.0.0"
-dependencies = [
- "codex-core",
- "codex-lmstudio",
- "codex-ollama",
 ]
 
 [[package]]
@@ -2257,16 +2126,6 @@ name = "codex-utils-rustls-provider"
 version = "0.0.0"
 dependencies = [
  "rustls",
-]
-
-[[package]]
-name = "codex-utils-sandbox-summary"
-version = "0.0.0"
-dependencies = [
- "codex-core",
- "codex-protocol",
- "codex-utils-absolute-path",
- "pretty_assertions",
 ]
 
 [[package]]
@@ -3189,7 +3048,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a1c3cc8e57274ec99de65301228b537f1e4eedc1b8e0f9411c6caac8ae7308f"
 dependencies = [
  "log",
- "regex",
 ]
 
 [[package]]
@@ -3207,7 +3065,6 @@ dependencies = [
  "anstream",
  "anstyle",
  "env_filter",
- "jiff",
  "log",
 ]
 
@@ -4595,30 +4452,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
-name = "jiff"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67e8da4c49d6d9909fe03361f9b620f58898859f5c7aded68351e85e71ecf50"
-dependencies = [
- "jiff-static",
- "log",
- "portable-atomic",
- "portable-atomic-util",
- "serde_core",
-]
-
-[[package]]
-name = "jiff-static"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0c84ee7f197eca9a86c6fd6cb771e55eb991632f15f2bc3ca6ec838929e6e78"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4966,25 +4799,6 @@ name = "matchit"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3eede3bdf92f3b4f9dc04072a9ce5ab557d5ec9038773bf9ffcd5588b3cc05b"
-
-[[package]]
-name = "mcp_test_support"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "codex-core",
- "codex-mcp-server",
- "codex-utils-cargo-bin",
- "core_test_support",
- "os_info",
- "pretty_assertions",
- "rmcp",
- "serde",
- "serde_json",
- "shlex",
- "tokio",
- "wiremock",
-]
 
 [[package]]
 name = "md-5"
@@ -6022,15 +5836,6 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
-
-[[package]]
-name = "portable-atomic-util"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9db96d7fa8782dd8c15ce32ffe8680bbd1e978a43bf51a34d39483540495f5"
-dependencies = [
- "portable-atomic",
-]
 
 [[package]]
 name = "portable-pty"

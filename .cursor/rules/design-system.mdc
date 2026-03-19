@@ -201,7 +201,7 @@ Neumorphism is reserved for **pressed/inset states** — active toggle buttons, 
 - **Primary:** `background: var(--text-primary); color: var(--bg-card);` — black button with white text in light mode, inverted in dark. Border-radius 6px. Padding 7px 14px. Font-size 11.5px, weight 500. Hover: lighten slightly.
 - **Secondary/Ghost:** `background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);`. Same sizing. Hover: very subtle background fill.
 - **Destructive:** Same as primary but `background: var(--accent-red)`.
-- **No icons in buttons** unless the button is icon-only. Labels are short and lowercase: "approve & deploy" not "✓ Approve & Deploy".
+- **should be icons in buttons**
 - **Keyboard shortcut badges** next to buttons/actions: monospace, 10px, `background: var(--bg-secondary); border: 1px solid var(--border-light); padding: 1px 5px; border-radius: 3px;`
 
 ## Interactive States

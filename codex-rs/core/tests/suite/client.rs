@@ -2358,7 +2358,7 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
     // Expect POST to /openai/responses with api-version query param
     Mock::given(method("POST"))
         .and(path("/openai/responses"))
-        .and(query_param("api-version", "2025-04-01-preview"))
+        .and(query_param("api-version", "preview"))
         .and(header_regex("Custom-Header", "Value"))
         .and(header_regex(
             "Authorization",
@@ -2381,7 +2381,7 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
         experimental_bearer_token: None,
         query_params: Some(std::collections::HashMap::from([(
             "api-version".to_string(),
-            "2025-04-01-preview".to_string(),
+            "preview".to_string(),
         )])),
         env_key_instructions: None,
         wire_api: WireApi::Responses,
@@ -2442,7 +2442,7 @@ async fn env_var_overrides_loaded_auth() {
     // Expect POST to /openai/responses with api-version query param
     Mock::given(method("POST"))
         .and(path("/openai/responses"))
-        .and(query_param("api-version", "2025-04-01-preview"))
+        .and(query_param("api-version", "preview"))
         .and(header_regex("Custom-Header", "Value"))
         .and(header_regex(
             "Authorization",
@@ -2464,7 +2464,7 @@ async fn env_var_overrides_loaded_auth() {
         env_key: Some(existing_env_var_with_random_value.to_string()),
         query_params: Some(std::collections::HashMap::from([(
             "api-version".to_string(),
-            "2025-04-01-preview".to_string(),
+            "preview".to_string(),
         )])),
         env_key_instructions: None,
         experimental_bearer_token: None,

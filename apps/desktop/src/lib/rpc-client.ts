@@ -15,6 +15,14 @@ export async function rpcNotify(
   return invoke("rpc_notify", { method, params });
 }
 
+/** Send a JSON-RPC response back to the app-server for a server request. */
+export async function rpcRespond(
+  id: number,
+  result: unknown = {},
+): Promise<void> {
+  return invoke("rpc_respond", { id, result });
+}
+
 export function onNotification(
   callback: (payload: string) => void,
 ): Promise<UnlistenFn> {
