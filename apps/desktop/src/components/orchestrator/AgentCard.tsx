@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Loader2, Square } from "lucide-react";
+import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, PieChart, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
 import { useThreadStore } from "@/lib/stores/thread-store";
+import { useAppStore } from "@/lib/stores/app-store";
 import { interruptTurn } from "@/lib/codex-turn";
 import type { Agent } from "@/lib/stores/thread-store";
 
@@ -38,11 +39,48 @@ function modelSummaryForCard(models: string[]): string {
   return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
 }
 
+function repoLabel(agent: Agent, projectPath: string | null, projectName: string | null): string {
+  const url = agent.originUrl;
+  if (url) {
+    const m = url.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/i);
+    if (m) return m[1];
+  }
+  const name = projectName?.trim();
+  if (name) return name;
+  if (projectPath) {
+    const seg = projectPath.replace(/\/$/, "").split("/").pop();
+    if (seg) return seg;
+  }
+  return "—";
+}
+
+/** Placeholder line stats when real diff totals are not persisted (matches ChatView review pill). */
+function diffStatsForCard(agent: Agent): { add: number; del: number } | null {
+  const n = agent.files.length;
+  if (n === 0) return null;
+  return { add: n * 47, del: n * 12 };
+}
+
+function MetaItem({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,11rem)]">
+      <span className="shrink-0 w-3 flex justify-center text-text-tertiary [&>svg]:block">
+        {icon}
+      </span>
+      <span className="min-w-0 text-[11px] text-text-secondary leading-snug truncate font-sans">
+        {children}
+      </span>
+    </div>
+  );
+}
+
 export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compact }: AgentCardProps) {
   const [hovered, setHovered] = useState(false);
   const [stopHovered, setStopHovered] = useState(false);
   const snippetRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const projectName = useAppStore((s) => s.projectName);
 
   const working = Boolean(agent.turnInProgress && agent.codexThreadId);
   const planLen = agent.planSteps?.length ?? 0;
@@ -163,7 +201,7 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
       >
         <div
           className={cn(
-            "font-medium text-text-primary leading-tight flex-1 min-w-0",
+            "font-medium text-text-primary leading-snug flex-1 min-w-0",
             compact ? "text-[12px]" : "text-[13px]",
           )}
         >
@@ -207,28 +245,57 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
         </div>
       )}
 
-      <div
-        className={cn(
-          "flex justify-between items-center text-text-faint",
-          compact ? "text-[9.5px]" : "text-[10.5px]",
-        )}
-      >
-        <span className="font-mono truncate">
-          {agent.branch}
-          {(agent.modelsUsed?.length ?? 0) > 0 && (
-            <>
-              {" • "}
-              {modelSummaryForCard(agent.modelsUsed ?? [])}
-            </>
+      {compact ? (
+        <div
+          className={cn(
+            "flex justify-between items-center text-text-faint",
+            "text-[9.5px]",
           )}
-        </span>
-        {!compact && (
-          <div className="flex gap-2.5 shrink-0 ml-2 font-sans">
-            {agent.time !== "—" && <span>{agent.time}</span>}
-            {agent.files.length > 0 && <span>{agent.files.length} files</span>}
-          </div>
-        )}
-      </div>
+        >
+          <span className="font-mono leading-snug truncate">
+            {agent.branch}
+            {(agent.modelsUsed?.length ?? 0) > 0 && (
+              <>
+                {" • "}
+                {modelSummaryForCard(agent.modelsUsed ?? [])}
+              </>
+            )}
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 w-full text-text-secondary">
+          <MetaItem icon={<Folder size={12} strokeWidth={1.75} />}>
+            {repoLabel(agent, projectPath, projectName)}
+          </MetaItem>
+          <MetaItem icon={<GitBranch size={12} strokeWidth={1.75} />}>
+            {agent.branch.trim() ? agent.branch : "—"}
+          </MetaItem>
+          <MetaItem icon={<Box size={12} strokeWidth={1.75} />}>
+            {(agent.modelsUsed?.length ?? 0) > 0
+              ? modelSummaryForCard(agent.modelsUsed ?? [])
+              : "—"}
+          </MetaItem>
+          <MetaItem icon={<PieChart size={12} strokeWidth={1.75} />}>
+            {agent.tokens !== "—" ? agent.tokens : "—"}
+          </MetaItem>
+          <MetaItem icon={<Clock size={12} strokeWidth={1.75} />}>
+            {agent.time !== "—" ? agent.time : "—"}
+          </MetaItem>
+          <MetaItem icon={<FileDiff size={12} strokeWidth={1.75} />}>
+            {(() => {
+              const d = diffStatsForCard(agent);
+              if (!d) return "—";
+              return (
+                <span className="font-mono text-[11px] leading-snug">
+                  <span className="text-accent-green">+{d.add}</span>
+                  <span className="text-text-tertiary"> </span>
+                  <span className="text-accent-red">-{d.del}</span>
+                </span>
+              );
+            })()}
+          </MetaItem>
+        </div>
+      )}
     </div>
   );
 }

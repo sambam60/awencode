@@ -2,6 +2,15 @@ import { create } from "zustand";
 
 export type ThemePreference = "light" | "dark" | "system";
 
+export interface ProjectTab {
+  path: string;
+  name: string;
+}
+
+export function tabNameFromPath(path: string): string {
+  return path.replace(/\/$/, "").split("/").filter(Boolean).pop() ?? "Project";
+}
+
 function readStoredTheme(): ThemePreference {
   try {
     const v = localStorage.getItem("awencode-theme");
@@ -26,11 +35,18 @@ interface AppState {
   projectName: string | null;
   /** Working directory for codex (thread/start, turn/start cwd). */
   projectPath: string | null;
+  /** Open project workspaces (tabs). Active tab matches projectPath / projectName. */
+  projectTabs: ProjectTab[];
   setTheme: (theme: ThemePreference) => void;
   toggleTheme: () => void;
   setCommandBarOpen: (open: boolean) => void;
   setProjectName: (name: string | null) => void;
   setProjectPath: (path: string | null) => void;
+  clearWorkspace: () => void;
+  openWorkspaceSolo: (path: string, name: string) => void;
+  addOrFocusProjectTab: (path: string, name: string) => void;
+  switchProjectTab: (path: string) => void;
+  closeProjectTab: (path: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -38,6 +54,7 @@ export const useAppStore = create<AppState>((set) => ({
   commandBarOpen: false,
   projectName: null,
   projectPath: null,
+  projectTabs: [],
   setTheme: (theme) => {
     persistTheme(theme);
     set({ theme });
@@ -56,5 +73,76 @@ export const useAppStore = create<AppState>((set) => ({
     }),
   setCommandBarOpen: (open) => set({ commandBarOpen: open }),
   setProjectName: (name) => set({ projectName: name }),
-  setProjectPath: (path) => set({ projectPath: path }),
+  setProjectPath: (path) => {
+    if (path === null) {
+      set({
+        projectPath: null,
+        projectName: null,
+        projectTabs: [],
+      });
+      return;
+    }
+    const name = tabNameFromPath(path);
+    set({
+      projectPath: path,
+      projectName: name,
+      projectTabs: [{ path, name }],
+    });
+  },
+  clearWorkspace: () =>
+    set({
+      projectPath: null,
+      projectName: null,
+      projectTabs: [],
+    }),
+  openWorkspaceSolo: (path, name) =>
+    set({
+      projectPath: path,
+      projectName: name,
+      projectTabs: [{ path, name }],
+    }),
+  addOrFocusProjectTab: (path, name) =>
+    set((s) => {
+      const existing = s.projectTabs.some((t) => t.path === path);
+      const tabs = existing
+        ? s.projectTabs
+        : [...s.projectTabs, { path, name }];
+      return {
+        projectTabs: tabs,
+        projectPath: path,
+        projectName: name,
+      };
+    }),
+  switchProjectTab: (path) =>
+    set((s) => {
+      const tab = s.projectTabs.find((t) => t.path === path);
+      if (!tab) return s;
+      return {
+        projectPath: tab.path,
+        projectName: tab.name,
+      };
+    }),
+  closeProjectTab: (path) =>
+    set((s) => {
+      const idx = s.projectTabs.findIndex((t) => t.path === path);
+      if (idx < 0) return s;
+      const tabs = s.projectTabs.filter((t) => t.path !== path);
+      if (tabs.length === 0) {
+        return {
+          projectPath: null,
+          projectName: null,
+          projectTabs: [],
+        };
+      }
+      if (s.projectPath !== path) {
+        return { projectTabs: tabs };
+      }
+      const nextIdx = Math.min(idx, tabs.length - 1);
+      const next = tabs[nextIdx]!;
+      return {
+        projectTabs: tabs,
+        projectPath: next.path,
+        projectName: next.name,
+      };
+    }),
 }));

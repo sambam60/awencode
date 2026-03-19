@@ -103,7 +103,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
   const setTheme = useAppStore((s) => s.setTheme);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-  const setProjectPath = useAppStore((s) => s.setProjectPath);
+  const clearWorkspace = useAppStore((s) => s.clearWorkspace);
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
@@ -115,7 +115,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => {
-              setProjectPath(null);
+              clearWorkspace();
               setView("home");
             }}
             className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"

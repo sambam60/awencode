@@ -198,8 +198,7 @@ function ModelStep({
 
 function WorkspaceStep({ onNext }: { onNext: () => void }) {
   const [dir, setDir] = useState("");
-  const setProjectPath = useAppStore((s) => s.setProjectPath);
-  const setProjectName = useAppStore((s) => s.setProjectName);
+  const openWorkspaceSolo = useAppStore((s) => s.openWorkspaceSolo);
 
   const handleSelect = async () => {
     try {
@@ -215,8 +214,8 @@ function WorkspaceStep({ onNext }: { onNext: () => void }) {
 
   const handleNext = () => {
     if (dir) {
-      setProjectPath(dir);
-      setProjectName(dir.split("/").filter(Boolean).pop() ?? "Project");
+      const name = dir.split("/").filter(Boolean).pop() ?? "Project";
+      openWorkspaceSolo(dir, name);
     }
     onNext();
   };

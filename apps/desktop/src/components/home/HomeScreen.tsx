@@ -13,8 +13,7 @@ interface HomeScreenProps {
 }
 
 export function HomeScreen({ onOpenProject }: HomeScreenProps) {
-  const setProjectName = useAppStore((s) => s.setProjectName);
-  const setProjectPath = useAppStore((s) => s.setProjectPath);
+  const openWorkspaceSolo = useAppStore((s) => s.openWorkspaceSolo);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const [recentProjects, setRecentProjects] = useState<RecentProjectType[]>([]);
@@ -32,10 +31,10 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
       const selected = await open({ directory: true, multiple: false });
       if (selected) {
         const path = typeof selected === "string" ? selected : null;
-        const name = path ? path.split("/").filter(Boolean).pop() ?? "Project" : "Project";
-        setProjectName(name);
-        setProjectPath(path);
-        if (path) addRecentProject(path, name);
+        if (!path) return;
+        const name = path.split("/").filter(Boolean).pop() ?? "Project";
+        openWorkspaceSolo(path, name);
+        addRecentProject(path, name);
         setRecentProjects(getRecentProjects());
         onOpenProject();
       }
@@ -57,8 +56,7 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
       }
       const clonedPath = await invoke<string>("git_clone", { url, parentDir: parentDir });
       const name = clonedPath.split("/").filter(Boolean).pop() ?? "Project";
-      setProjectName(name);
-      setProjectPath(clonedPath);
+      openWorkspaceSolo(clonedPath, name);
       addRecentProject(clonedPath, name);
       setRecentProjects(getRecentProjects());
       setCloneUrl("");
@@ -70,8 +68,7 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
   };
 
   const openRecent = (project: RecentProjectType) => {
-    setProjectName(project.name);
-    setProjectPath(project.path);
+    openWorkspaceSolo(project.path, project.name);
     addRecentProject(project.path, project.name);
     setRecentProjects(getRecentProjects());
     onOpenProject();

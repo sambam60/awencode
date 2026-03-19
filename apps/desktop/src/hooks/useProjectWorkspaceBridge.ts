@@ -153,6 +153,9 @@ export function useProjectWorkspaceBridge() {
   useEffect(() => {
     if (!workspaceReady || !projectPath) return;
 
+    /** Path this subscription's in-memory thread/board state belongs to — not `getState().projectPath` in cleanup (that may already be the next tab). */
+    const subscribedPath = projectPath;
+
     const scheduleFlush = () => {
       if (flushTimerRef.current) {
         window.clearTimeout(flushTimerRef.current);
@@ -178,8 +181,7 @@ export function useProjectWorkspaceBridge() {
         window.clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
       }
-      const path = useAppStore.getState().projectPath;
-      if (path) flushToProject(path);
+      flushToProject(subscribedPath);
     };
   }, [projectPath, workspaceReady]);
 }

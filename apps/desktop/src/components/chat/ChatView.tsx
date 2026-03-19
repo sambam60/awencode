@@ -10,7 +10,7 @@ import {
   Box,
   Terminal,
   FolderOpen,
-  ArrowUpDown,
+  FileDiff,
   MessageSquare,
   GitFork,
   FileCode,
@@ -1080,7 +1080,7 @@ function DiffButton({ fileCount }: { fileCount: number }) {
         )}
         disabled={fileCount === 0}
       >
-        <ArrowUpDown size={12} />
+        <FileDiff size={12} strokeWidth={1.75} className="shrink-0" />
         {fileCount > 0 && (
           <span className="font-mono text-[9.5px] text-text-faint bg-bg-primary border border-border-light rounded px-1 py-0.5 leading-none">
             {fileCount}
@@ -1117,7 +1117,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const accent = statusColor(agent);
   const projectPath = useAppStore((s) => s.projectPath);
   const appProjectName = useAppStore((s) => s.projectName);
-  const setProjectPath = useAppStore((s) => s.setProjectPath);
+  const clearWorkspace = useAppStore((s) => s.clearWorkspace);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const addAgent = useThreadStore((s) => s.addAgent);
@@ -1442,7 +1442,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={() => {
-              setProjectPath(null);
+              clearWorkspace();
               setView("home");
             }}
             className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
