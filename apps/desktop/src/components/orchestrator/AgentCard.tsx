@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, PieChart, Square } from "lucide-react";
+import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
 import { useThreadStore } from "@/lib/stores/thread-store";
@@ -61,6 +61,73 @@ function diffStatsForCard(agent: Agent): { add: number; del: number } | null {
   return { add: n * 47, del: n * 12 };
 }
 
+/** Resolved 0–100 for the context ring; null = unknown (empty ring). */
+function contextPercentFromAgent(agent: Agent): number | null {
+  const raw = agent.contextUsagePercent;
+  if (raw != null && Number.isFinite(raw)) {
+    return Math.min(100, Math.max(0, raw));
+  }
+  const t = agent.tokens.trim();
+  if (t === "" || t === "—") return null;
+  const m = t.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (m) {
+    const v = parseFloat(m[1]);
+    if (Number.isFinite(v)) return Math.min(100, Math.max(0, v));
+  }
+  return null;
+}
+
+function formatContextLabel(agent: Agent, percent: number | null): string {
+  if (percent != null) {
+    if (percent >= 99.95) return "100%";
+    const x = Math.round(percent * 10) / 10;
+    return Number.isInteger(x) ? `${x}%` : `${x.toFixed(1)}%`;
+  }
+  if (agent.tokens !== "—" && agent.tokens.trim() !== "") return agent.tokens;
+  return "—";
+}
+
+/** SVG ring: arc length tracks `percent` (null = track empty). */
+function ContextUsageRing({ percent }: { percent: number | null }) {
+  const r = 4;
+  const c = 2 * Math.PI * r;
+  const cx = 6;
+  const cy = 6;
+  const p = percent == null ? 0 : Math.min(100, Math.max(0, percent));
+  const offset = c - (p / 100) * c;
+  const empty = percent == null;
+  return (
+    <svg
+      width={12}
+      height={12}
+      viewBox="0 0 12 12"
+      className="shrink-0"
+      aria-hidden
+    >
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r}
+        fill="none"
+        className="stroke-border-light"
+        strokeWidth={1.25}
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r}
+        fill="none"
+        className="stroke-accent-blue"
+        strokeWidth={1.25}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={empty ? c : offset}
+        transform={`rotate(-90 ${cx} ${cy})`}
+      />
+    </svg>
+  );
+}
+
 function MetaItem({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,11rem)]">
@@ -118,6 +185,7 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
   };
 
   const showHoverInfo = hovered && !working;
+  const contextPct = contextPercentFromAgent(agent);
 
   return (
     <div
@@ -275,9 +343,12 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
               ? modelSummaryForCard(agent.modelsUsed ?? [])
               : "—"}
           </MetaItem>
-          <MetaItem icon={<PieChart size={12} strokeWidth={1.75} />}>
-            {agent.tokens !== "—" ? agent.tokens : "—"}
-          </MetaItem>
+          <div className="inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,11rem)]">
+            <ContextUsageRing percent={contextPct} />
+            <span className="min-w-0 text-[11px] text-text-secondary leading-snug truncate font-sans">
+              {formatContextLabel(agent, contextPct)}
+            </span>
+          </div>
           <MetaItem icon={<Clock size={12} strokeWidth={1.75} />}>
             {agent.time !== "—" ? agent.time : "—"}
           </MetaItem>

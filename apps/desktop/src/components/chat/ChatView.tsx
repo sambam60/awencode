@@ -1124,6 +1124,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const setAgentCodexThreadId = useThreadStore((s) => s.setAgentCodexThreadId);
   const addAgentModel = useThreadStore((s) => s.addAgentModel);
   const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
+  const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
   const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
@@ -1173,6 +1174,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       if (!trimmed && attachments.length === 0) return;
 
       const wasUnsetTitle = agent.title === NEW_THREAD_TITLE;
+      const firstUserSend = agent.messages.length === 0;
 
       const displayContent =
         trimmed ||
@@ -1187,6 +1189,9 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         content: displayContent,
         imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       });
+      if (firstUserSend && agent.status === "queued") {
+        setAgentStatus(agent.id, "active");
+      }
 
       const provisionalTitle = wasUnsetTitle
         ? titleFromFirstSendDisplay(displayContent)
@@ -1299,9 +1304,11 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       agent.title,
       projectPath,
       appendAgentMessage,
+      setAgentStatus,
       setAgentCodexThreadId,
       addAgentModel,
       updateAgentTitle,
+      agent.status,
     ],
   );
 
@@ -1375,8 +1382,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [agent.pendingApproval, clearApproval]);
 
-  const canCompose =
-    agent.status !== "queued" && agent.status !== "deployed";
+  const canCompose = agent.status !== "deployed";
 
   const isThinking =
     agent.turnInProgress &&
@@ -1417,7 +1423,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       id,
       title: "New thread",
       branch,
-      status: "active",
+      status: "queued",
       lastAction: "Waiting for your first message",
       progress: 0,
       time: "—",
@@ -1436,16 +1442,16 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       {/* Top bar — spans full width */}
       <div
         data-tauri-drag-region
-        className="h-12 shrink-0 flex items-center pl-[92px] pr-4 gap-3 border-b border-border-light select-none"
+        className="h-11 shrink-0 flex items-center pl-[92px] pr-5 pt-1.5 pb-0.5 gap-3 border-b border-border-light select-none"
       >
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex h-7 items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={() => {
               clearWorkspace();
               setView("home");
             }}
-            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Home"
           >
             <img
@@ -1457,7 +1463,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={() => setView("settings")}
-            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Settings"
           >
             <img
@@ -1469,7 +1475,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={handleNewChat}
-            className="inline-flex items-center justify-center p-1.5 rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
             title="New chat (adds to Active)"
           >
             <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
@@ -1477,7 +1483,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1 p-1.5 rounded text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120"
+            className="inline-flex h-7 items-center gap-1 rounded px-2 text-text-faint hover:text-text-secondary hover:bg-bg-secondary cursor-pointer transition-colors duration-120"
             title="Back to board"
           >
             <ChevronLeft size={12} className="shrink-0" strokeWidth={2} />

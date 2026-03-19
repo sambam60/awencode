@@ -107,7 +107,7 @@ export function Orchestrator() {
       id,
       title: "New thread",
       branch,
-      status: "active",
+      status: "queued",
       lastAction: "Waiting for your first message",
       progress: 0,
       time: "—",
@@ -130,7 +130,7 @@ export function Orchestrator() {
         className="group/header h-11 flex items-center pl-[92px] pr-5 pt-1.5 pb-0.5 shrink-0 select-none border-b border-border-light"
       >
         <div
-          className="flex h-7 items-center gap-1 min-w-0 flex-1"
+          className="flex h-7 items-center gap-1.5 min-w-0 flex-1"
           style={noDragStyle}
         >
           {/* Home */}
@@ -164,7 +164,7 @@ export function Orchestrator() {
           <button
             onClick={handleNewChat}
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
-            title="New chat (adds to Active)"
+            title="New chat (adds to Queue until you send)"
           >
             <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
           </button>

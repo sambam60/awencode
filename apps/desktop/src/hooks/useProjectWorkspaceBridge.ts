@@ -153,7 +153,7 @@ export function useProjectWorkspaceBridge() {
   useEffect(() => {
     if (!workspaceReady || !projectPath) return;
 
-    /** Path this subscription's in-memory thread/board state belongs to — not `getState().projectPath` in cleanup (that may already be the next tab). */
+    /** Workspace key for this subscription period (cleanup must not flush if hydration moved on). */
     const subscribedPath = projectPath;
 
     const scheduleFlush = () => {
@@ -181,7 +181,13 @@ export function useProjectWorkspaceBridge() {
         window.clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
       }
-      flushToProject(subscribedPath);
+      // Only persist if in-memory state still belongs to this subscription. If another
+      // effect already switched `projectPath` and hydrated a different project, the stores
+      // hold the new project's data — flushing would corrupt the old workspace key.
+      const activePath = useAppStore.getState().projectPath;
+      if (activePath === subscribedPath) {
+        flushToProject(subscribedPath);
+      }
     };
   }, [projectPath, workspaceReady]);
 }

@@ -110,15 +110,15 @@ export function SettingsView({ onBack }: SettingsViewProps) {
       {/* Top bar — reserve space for macOS traffic lights */}
       <div
         data-tauri-drag-region
-        className="h-11 flex items-center justify-between pl-[92px] pr-5 pt-1.5 shrink-0 select-none border-b border-border-light"
+        className="h-11 flex items-center justify-between pl-[92px] pr-5 pt-1.5 pb-0.5 shrink-0 select-none border-b border-border-light"
       >
-        <div className="flex items-center gap-1">
+        <div className="flex h-7 items-center gap-1.5">
           <button
             onClick={() => {
               clearWorkspace();
               setView("home");
             }}
-            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Home"
           >
             <img
@@ -129,7 +129,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
           </button>
           <button
             onClick={() => setView("settings")}
-            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded cursor-pointer text-text-primary dark:text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Settings"
           >
             <img

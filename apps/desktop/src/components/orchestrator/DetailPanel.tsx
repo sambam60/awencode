@@ -474,7 +474,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               </button>
             )}
 
-            {agent.status !== "queued" && agent.status !== "deployed" && (
+            {agent.status !== "deployed" && (
               <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded shrink-0">
                 <input
                   placeholder="Quick message..."

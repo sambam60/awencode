@@ -72,6 +72,8 @@ export interface Agent {
   progress: number;
   time: string;
   tokens: string;
+  /** Window fill 0–100 when known (drives context ring on thread cards). */
+  contextUsagePercent?: number | null;
   files: string[];
   pr: string | null;
   messages: AgentMessage[];
