@@ -47,10 +47,18 @@ function buildSnapshot(projectPath: string): ProjectWorkspaceData {
   const prevLast =
     useProjectWorkspaceStore.getState().projects[projectPath]?.lastView ??
     "orchestrator";
-  const lastView: WorkspaceSubView =
+  let lastView: WorkspaceSubView =
     view === "orchestrator" || view === "chat" || view === "settings"
       ? view
       : prevLast;
+  // Leaving for home/onboarding: don't keep "settings" as the restore target —
+  // otherwise reopening the project from home jumps back into settings.
+  if (
+    (view === "home" || view === "onboarding") &&
+    lastView === "settings"
+  ) {
+    lastView = "orchestrator";
+  }
 
   return {
     agents: agents.map(sanitizeAgentForDisk),
@@ -83,9 +91,9 @@ function hydrateProject(projectPath: string) {
   const setView = useViewStore.getState().setView;
   if (ws.lastView === "chat" && selectedAgentId) {
     setView("chat");
-  } else if (ws.lastView === "settings") {
-    setView("settings");
   } else {
+    // Don't restore settings from disk — it isn't a sensible "resume" surface
+    // (e.g. home → reopen project should land on the board, not settings).
     setView("orchestrator");
   }
 }

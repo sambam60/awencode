@@ -1,6 +1,10 @@
 import React, { useState } from "react";
+import { Archive, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
+import { GlassConfirmDialog } from "@/components/ui/GlassConfirmDialog";
+import { rpcRequest } from "@/lib/rpc-client";
+import { useThreadStore } from "@/lib/stores/thread-store";
 import type { Agent, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
 interface DetailPanelProps {
@@ -213,11 +217,86 @@ function OpenFullViewArrow({ className }: { className?: string }) {
   );
 }
 
+type ConfirmKind = "archive" | "delete" | null;
+
 export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const [tab, setTab] = useState<Tab>("status");
+  const [confirmKind, setConfirmKind] = useState<ConfirmKind>(null);
+  const [actionBusy, setActionBusy] = useState<"archive" | "delete" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const removeAgent = useThreadStore((s) => s.removeAgent);
   const accent = statusColor(agent);
 
+  const threadId = agent.codexThreadId ?? null;
+  const canArchive = Boolean(threadId);
+
+  function openArchiveConfirm() {
+    if (!threadId || actionBusy) return;
+    setConfirmKind("archive");
+  }
+
+  function openDeleteConfirm() {
+    if (actionBusy) return;
+    setConfirmKind("delete");
+  }
+
+  async function runArchive() {
+    if (!threadId) return;
+    setActionError(null);
+    setActionBusy("archive");
+    try {
+      await rpcRequest("thread/archive", { threadId });
+      removeAgent(agent.id);
+      onClose();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Archive failed");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function runDelete() {
+    setActionError(null);
+    setActionBusy("delete");
+    try {
+      if (threadId) {
+        await rpcRequest("thread/unsubscribe", { threadId });
+      }
+      removeAgent(agent.id);
+      onClose();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Remove failed");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   return (
+    <>
+    <GlassConfirmDialog
+      open={confirmKind !== null}
+      title={confirmKind === "archive" ? "Archive thread" : "Remove thread"}
+      message={
+        confirmKind === "archive"
+          ? `Archive "${agent.title}"? It will leave the board and be stored as an archived thread.`
+          : confirmKind === "delete"
+            ? `Remove "${agent.title}" from the board? You will stop receiving updates for this session.`
+            : ""
+      }
+      confirmLabel={confirmKind === "archive" ? "Archive" : "Remove"}
+      cancelLabel="Cancel"
+      danger={confirmKind === "delete"}
+      busy={actionBusy !== null}
+      onClose={() => {
+        if (actionBusy === null) setConfirmKind(null);
+      }}
+      onConfirm={() => {
+        const k = confirmKind;
+        setConfirmKind(null);
+        if (k === "archive") void runArchive();
+        else if (k === "delete") void runDelete();
+      }}
+    />
     <div
       className="w-[360px] h-full flex flex-col shrink-0 overflow-hidden rounded-l-[10px] border-l border-border-light glass-overlay"
     >
@@ -291,7 +370,8 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       </div>
 
       {/* Tab content — same horizontal inset as header (px-6) */}
-      <div className="flex-1 overflow-auto px-6 py-6">
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 overflow-auto px-6 py-6 min-h-0">
         {tab === "status" && (
           <div className="flex flex-col gap-5">
             <AgentPlanBlock steps={agent.planSteps ?? []} />
@@ -418,7 +498,49 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             )}
           </div>
         )}
+        </div>
+
+        <div className="shrink-0 px-6 py-4 space-y-2">
+          {actionError && (
+            <p className="text-[11px] text-accent-red leading-snug">{actionError}</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!canArchive || actionBusy !== null}
+              onClick={openArchiveConfirm}
+              title={
+                canArchive
+                  ? "Archive on disk and remove from board"
+                  : "Start a chat session to enable archive"
+              }
+              className={cn(
+                "inline-flex items-center justify-center gap-1.5 rounded-md border px-3.5 py-[7px] text-[11.5px] font-medium transition-colors duration-120",
+                "border-border-default text-text-secondary hover:bg-bg-secondary/80",
+                (!canArchive || actionBusy !== null) && "opacity-40 pointer-events-none cursor-not-allowed",
+              )}
+            >
+              <Archive className="h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
+              {actionBusy === "archive" ? "Archiving…" : "Archive"}
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy !== null}
+              onClick={openDeleteConfirm}
+              title="Remove from board and unsubscribe from updates"
+              className={cn(
+                "inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-[7px] text-[11.5px] font-medium transition-colors duration-120",
+                "bg-accent-red text-white hover:brightness-95",
+                actionBusy !== null && "opacity-50 pointer-events-none cursor-not-allowed",
+              )}
+            >
+              <Trash2 className="h-3.5 w-3.5 shrink-0 opacity-90" strokeWidth={1.75} />
+              {actionBusy === "delete" ? "Removing…" : "Delete"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
+    </>
   );
 }

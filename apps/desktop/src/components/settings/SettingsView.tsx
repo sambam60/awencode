@@ -7,6 +7,8 @@ import {
   useCallback,
   type ComponentType,
 } from "react";
+import { useThreadStore } from "@/lib/stores/thread-store";
+import { getThemePortalContainer } from "@/lib/theme-root";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -33,8 +35,6 @@ import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
 import { searchMcpRegistry, mcpServerTomlKey, type RegistryServer } from "@/lib/mcp-registry";
-import { useResolvedThemeIsDark } from "@/lib/use-resolved-theme-dark";
-
 type NavIcon = ComponentType<LucideProps>;
 
 /** MCP mark from public asset geometry; inline so strokes use `currentColor` like Lucide. */
@@ -186,7 +186,8 @@ export function SettingsView({ onBack }: SettingsViewProps) {
             )}
             {activeSection === "agent" && <AgentSection />}
             {activeSection === "mcp" && <McpSection />}
-            {!["general", "appearance", "agent", "mcp"].includes(activeSection) && (
+            {activeSection === "archived" && <ArchivedThreadsSection />}
+            {!["general", "appearance", "agent", "mcp", "archived"].includes(activeSection) && (
               <PlaceholderSection
                 label={NAV_ITEMS.find((n) => n.id === activeSection)?.label ?? ""}
               />
@@ -278,7 +279,6 @@ function SettingsChoiceField<T extends string>({
     top?: number;
     bottom?: number;
   } | null>(null);
-  const themeDark = useResolvedThemeIsDark();
   const selected = options.find((o) => o.value === value) ?? options[0];
 
   useLayoutEffect(() => {
@@ -344,48 +344,46 @@ function SettingsChoiceField<T extends string>({
     open &&
     menuBox &&
     createPortal(
-      <div className={cn(themeDark && "dark")}>
-        <div
-          ref={menuRef}
-          className="fixed z-[100] rounded-lg border border-border-light glass-overlay shadow-level-2 py-1 overflow-y-auto overscroll-contain"
-          style={{
-            left: menuBox.left,
-            width: menuBox.width,
-            maxHeight: menuBox.maxHeight,
-            ...(menuBox.top !== undefined
-              ? { top: menuBox.top }
-              : { bottom: menuBox.bottom }),
-          }}
-        >
-          {options.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => {
-                onChange(o.value);
-                setOpen(false);
-              }}
-              className={cn(
-                "w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 transition-colors duration-120 cursor-pointer glass-menu-row",
-                o.value === value && "glass-menu-row-active",
-              )}
-            >
-              <div className="min-w-0">
-                <div className="text-[12.5px] font-medium text-text-primary">{o.label}</div>
-                <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
-                  {o.description}
-                </div>
+      <div
+        ref={menuRef}
+        className="fixed z-[100] rounded-lg border border-border-light glass-overlay shadow-level-2 py-1 overflow-y-auto overscroll-contain text-text-primary"
+        style={{
+          left: menuBox.left,
+          width: menuBox.width,
+          maxHeight: menuBox.maxHeight,
+          ...(menuBox.top !== undefined
+            ? { top: menuBox.top }
+            : { bottom: menuBox.bottom }),
+        }}
+      >
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => {
+              onChange(o.value);
+              setOpen(false);
+            }}
+            className={cn(
+              "w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 transition-colors duration-120 cursor-pointer glass-menu-row",
+              o.value === value && "glass-menu-row-active",
+            )}
+          >
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium text-text-primary">{o.label}</div>
+              <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
+                {o.description}
               </div>
-              {o.value === value ? (
-                <Check className="h-3.5 w-3.5 shrink-0 text-text-primary mt-0.5" />
-              ) : (
-                <span className="w-3.5 shrink-0" />
-              )}
-            </button>
-          ))}
-        </div>
+            </div>
+            {o.value === value ? (
+              <Check className="h-3.5 w-3.5 shrink-0 text-text-primary mt-0.5" />
+            ) : (
+              <span className="w-3.5 shrink-0" />
+            )}
+          </button>
+        ))}
       </div>,
-      document.body,
+      getThemePortalContainer(),
     );
 
   return (
@@ -2065,6 +2063,180 @@ function McpSection() {
           onClose={() => setModalDraft(null)}
           onSaved={() => refresh()}
         />
+      )}
+    </div>
+  );
+}
+
+type ArchivedListItem = {
+  id: string;
+  name: string | null;
+  preview: string;
+  cwd: string;
+  gitInfo: { branch: string | null; originUrl: string | null } | null;
+  updatedAt: number;
+};
+
+function projectLabelFromPath(cwd: string): string {
+  const t = cwd.trim().replace(/[/\\]+$/, "");
+  if (!t.length) return "Unknown";
+  const segs = t.split(/[/\\]/);
+  return segs[segs.length - 1] ?? t;
+}
+
+function displayArchivedTitle(t: ArchivedListItem): string {
+  const n = t.name?.trim();
+  if (n) return n.length > 120 ? `${n.slice(0, 117)}…` : n;
+  const p = t.preview.trim().replace(/\s+/g, " ");
+  if (p) return p.length > 120 ? `${p.slice(0, 117)}…` : p;
+  return "Untitled thread";
+}
+
+function ArchivedThreadsSection() {
+  const addAgent = useThreadStore((s) => s.addAgent);
+  const [rows, setRows] = useState<ArchivedListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await rpcRequest<{ data: ArchivedListItem[]; nextCursor: string | null }>(
+        "thread/list",
+        {
+          archived: true,
+          limit: 100,
+          /** Empty array = all providers (default would filter to current provider only). */
+          modelProviders: [],
+          /**
+           * Only `appServer` (MCP / JSON-RPC app-server) rollouts — same surface Awencode uses.
+           * Broader source filters enumerate CLI/VS Code/exec sessions and shared Codex state in
+           * ways that contend with the official OpenAI Codex app.
+           */
+          sourceKinds: ["appServer"],
+        },
+      );
+      setRows(Array.isArray(res?.data) ? res.data : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load archived threads");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const restore = async (t: ArchivedListItem) => {
+    setRestoringId(t.id);
+    setError(null);
+    try {
+      await rpcRequest("thread/unarchive", { threadId: t.id });
+      const resumed = await rpcRequest<{
+        thread: {
+          id: string;
+          name: string | null;
+          gitInfo: { branch: string | null; originUrl: string | null } | null;
+        };
+      }>("thread/resume", {
+        threadId: t.id,
+        persistExtendedHistory: false,
+      });
+      const thread = resumed?.thread;
+      if (!thread?.id) {
+        throw new Error("Resume did not return a thread");
+      }
+      const merged: ArchivedListItem = {
+        ...t,
+        name: thread.name ?? t.name,
+        gitInfo: thread.gitInfo ?? t.gitInfo,
+      };
+      const title = displayArchivedTitle(merged);
+      const branch = merged.gitInfo?.branch ?? "";
+      const originRaw = merged.gitInfo?.originUrl ?? null;
+      addAgent(
+        {
+          id: `agent-${Date.now()}`,
+          title,
+          branch,
+          status: "queued",
+          lastAction: "Restored — open chat to continue",
+          progress: 0,
+          time: "—",
+          tokens: "—",
+          files: [],
+          pr: null,
+          messages: [],
+          blocked: false,
+          codexThreadId: thread.id,
+          originUrl: originRaw && originRaw.length > 0 ? originRaw : undefined,
+        },
+        { select: false },
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Restore failed");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  return (
+    <div>
+      <SectionHeading
+        title="Archived threads"
+        description="Sessions you archived from the board. Restore adds them to the Queued column."
+      />
+      {error && (
+        <p className="text-[11.5px] text-accent-red mb-4 leading-relaxed">{error}</p>
+      )}
+      {loading ? (
+        <div className="text-[12.5px] text-text-faint">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="px-4 py-8 rounded-lg border border-dashed border-border-light text-center">
+          <div className="text-[12.5px] text-text-faint">No archived threads</div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((t) => {
+            const project = projectLabelFromPath(t.cwd);
+            const busy = restoringId === t.id;
+            return (
+              <div
+                key={t.id}
+                className="flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-lg border border-border-light bg-bg-card"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium text-text-primary leading-snug">
+                    {displayArchivedTitle(t)}
+                  </div>
+                  <div
+                    className="font-mono text-[10px] uppercase tracking-label-wide text-text-faint mt-1 truncate"
+                    title={t.cwd}
+                  >
+                    {project}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy || restoringId !== null}
+                  onClick={() => void restore(t)}
+                  className={cn(
+                    "shrink-0 px-3.5 py-[7px] rounded-md text-[11.5px] font-medium border border-border-default text-text-secondary",
+                    "hover:bg-bg-secondary transition-colors duration-120 cursor-pointer",
+                    (busy || restoringId !== null) && "opacity-50 pointer-events-none cursor-not-allowed",
+                  )}
+                >
+                  {busy ? "Restoring…" : "Restore"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

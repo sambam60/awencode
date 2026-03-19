@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "./lib/stores/settings-store";
 import { useProjectWorkspaceBridge } from "./hooks/useProjectWorkspaceBridge";
+import { THEME_ROOT_ELEMENT_ID } from "./lib/theme-root";
 
 function ThemeClassRoot({ children }: { children: React.ReactNode }) {
   const theme = useAppStore((s) => s.theme);
@@ -30,7 +31,11 @@ function ThemeClassRoot({ children }: { children: React.ReactNode }) {
 
   const isDark = theme === "dark" || (theme === "system" && systemDark);
 
-  return <div className={isDark ? "dark" : ""}>{children}</div>;
+  return (
+    <div id={THEME_ROOT_ELEMENT_ID} className={isDark ? "dark" : ""}>
+      {children}
+    </div>
+  );
 }
 
 export default function App() {

@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { Plus, ChevronDown, Mic, ArrowUp, X, Image } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
-import { useResolvedThemeIsDark } from "@/lib/use-resolved-theme-dark";
+import { getThemePortalContainer } from "@/lib/theme-root";
 import {
   AWENCODE_FILE_PATH_MIME,
   AWENCODE_FILE_KIND_MIME,
@@ -50,14 +50,13 @@ const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
 const EMPTY_THREAD_PLACEHOLDER = "Ask anything, @ to add files, / for commands";
 const FOLLOW_UP_PLACEHOLDER = "Ask for follow-up changes";
 
-/** Escape chat column overflow + keep theme tokens (`.dark` is on App, not `html`). */
+/** Escape chat column overflow; portal mounts under theme root for `.dark` + tokens. */
 function GlassMenuPortal({
   open,
   anchorRef,
   onClose,
   widthPx,
   widthClass,
-  themeDark,
   children,
 }: {
   open: boolean;
@@ -65,7 +64,6 @@ function GlassMenuPortal({
   onClose: () => void;
   widthPx: number;
   widthClass: string;
-  themeDark: boolean;
   children: ReactNode;
 }) {
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -108,11 +106,11 @@ function GlassMenuPortal({
     : { left, bottom: window.innerHeight - rect.top + anchorGap };
 
   return createPortal(
-    <div className={cn(themeDark && "dark")}>
+    <>
       <div className="fixed inset-0 z-[90]" onClick={onClose} aria-hidden />
       <div
         className={cn(
-          "fixed z-[100] rounded-lg glass-overlay",
+          "fixed z-[100] rounded-lg glass-overlay text-text-primary",
           widthClass,
         )}
         style={positionStyle}
@@ -124,8 +122,8 @@ function GlassMenuPortal({
           {children}
         </div>
       </div>
-    </div>,
-    document.body,
+    </>,
+    getThemePortalContainer(),
   );
 }
 
@@ -140,7 +138,6 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const composeRootRef = useRef<HTMLDivElement>(null);
   const modelAnchorRef = useRef<HTMLButtonElement>(null);
   const reasoningAnchorRef = useRef<HTMLButtonElement>(null);
-  const themeDark = useResolvedThemeIsDark();
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
@@ -444,7 +441,6 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
               onClose={() => setModelOpen(false)}
               widthPx={224}
               widthClass="w-56"
-              themeDark={themeDark}
             >
               {enabledModelList.map((m) => (
                 <button
@@ -486,7 +482,6 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
               onClose={() => setReasoningOpen(false)}
               widthPx={160}
               widthClass="w-40"
-              themeDark={themeDark}
             >
               {REASONING_LEVELS.map((c) => (
                 <button

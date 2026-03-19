@@ -114,7 +114,7 @@ interface ThreadState {
   selectedAgentId: string | null;
   selectAgent: (id: string | null) => void;
   setAgents: (agents: Agent[]) => void;
-  addAgent: (agent: Agent) => void;
+  addAgent: (agent: Agent, options?: { select?: boolean }) => void;
   setAgentCodexThreadId: (agentId: string, threadId: string) => void;
   appendAgentMessage: (agentId: string, message: AgentMessage) => void;
   appendAgentStreamingDelta: (agentId: string, delta: string) => void;
@@ -133,6 +133,7 @@ interface ThreadState {
   setAgentPlan: (agentId: string, planSteps: AgentPlanStep[]) => void;
   updateAgentProgress: (agentId: string, progress: number) => void;
   setAgentCurrentTurnId: (agentId: string, turnId: string | null) => void;
+  removeAgent: (agentId: string) => void;
 }
 
 function progressFromPlanSteps(steps: AgentPlanStep[]): number {
@@ -146,7 +147,7 @@ export const useThreadStore = create<ThreadState>((set) => ({
   selectedAgentId: null,
   selectAgent: (id) => set({ selectedAgentId: id }),
   setAgents: (agents) => set({ agents }),
-  addAgent: (agent) =>
+  addAgent: (agent, options) =>
     set((s) => ({
       agents: [
         ...s.agents,
@@ -156,7 +157,8 @@ export const useThreadStore = create<ThreadState>((set) => ({
           planSteps: agent.planSteps ?? [],
         },
       ],
-      selectedAgentId: agent.id,
+      selectedAgentId:
+        options?.select === false ? s.selectedAgentId : agent.id,
     })),
 
   setAgentCodexThreadId: (agentId, threadId) =>
@@ -360,5 +362,11 @@ export const useThreadStore = create<ThreadState>((set) => ({
       agents: s.agents.map((a) =>
         a.id === agentId ? { ...a, currentTurnId: turnId } : a,
       ),
+    })),
+
+  removeAgent: (agentId) =>
+    set((s) => ({
+      agents: s.agents.filter((a) => a.id !== agentId),
+      selectedAgentId: s.selectedAgentId === agentId ? null : s.selectedAgentId,
     })),
 }));
