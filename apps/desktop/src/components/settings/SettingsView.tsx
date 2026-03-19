@@ -2110,12 +2110,8 @@ function ArchivedThreadsSection() {
           limit: 100,
           /** Empty array = all providers (default would filter to current provider only). */
           modelProviders: [],
-          /**
-           * Only `appServer` (MCP / JSON-RPC app-server) rollouts — same surface Awencode uses.
-           * Broader source filters enumerate CLI/VS Code/exec sessions and shared Codex state in
-           * ways that contend with the official OpenAI Codex app.
-           */
-          sourceKinds: ["appServer"],
+          /** All source kinds — safe because CODEX_HOME is ~/.awencode, isolated from ~/.codex. */
+          sourceKinds: ["cli", "vscode", "appServer", "exec"],
         },
       );
       setRows(Array.isArray(res?.data) ? res.data : []);

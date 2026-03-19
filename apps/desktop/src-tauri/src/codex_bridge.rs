@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,6 +10,18 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
+
+/// Returns `~/.awencode`, creating it if it does not exist.
+/// This is Awencode's isolated Codex home — separate from `~/.codex` used by the
+/// official OpenAI Codex CLI / app so the two never share sessions or config.
+fn awencode_codex_home() -> std::io::Result<PathBuf> {
+    let mut path = dirs::home_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot resolve home directory")
+    })?;
+    path.push(".awencode");
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
+}
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -93,7 +106,12 @@ impl CodexBridge {
             )
         })?;
 
+        let codex_home = awencode_codex_home()
+            .map_err(|e| format!("Failed to create Awencode data directory: {e}"))?;
+
         let mut cmd = Command::new(codex_bin);
+        // Isolate Awencode's data from the official OpenAI Codex app (~/.codex).
+        cmd.env("CODEX_HOME", &codex_home);
         if let Some(key) = self.openai_api_key.as_deref() {
             cmd.env("OPENAI_API_KEY", key);
         }
