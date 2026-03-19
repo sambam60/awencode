@@ -32,6 +32,7 @@ function hydrateAgentFromDisk(a: Agent): Agent {
     planSteps: a.planSteps ?? [],
     messages: a.messages ?? [],
     files: a.files ?? [],
+    modelsUsed: a.modelsUsed ?? [],
     streamingBuffer: "",
     turnInProgress: false,
     currentTurnId: null,

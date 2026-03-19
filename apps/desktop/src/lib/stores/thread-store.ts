@@ -98,6 +98,8 @@ export interface Agent {
   sha?: string | null;
   /** GitHub PR status details fetched from the API. */
   prStatus?: PrStatus | null;
+  /** Distinct models used by this thread over time. */
+  modelsUsed?: string[];
 }
 
 export interface PrStatus {
@@ -133,6 +135,7 @@ interface ThreadState {
   setAgentPlan: (agentId: string, planSteps: AgentPlanStep[]) => void;
   updateAgentProgress: (agentId: string, progress: number) => void;
   setAgentCurrentTurnId: (agentId: string, turnId: string | null) => void;
+  addAgentModel: (agentId: string, model: string) => void;
   removeAgent: (agentId: string) => void;
 }
 
@@ -155,6 +158,7 @@ export const useThreadStore = create<ThreadState>((set) => ({
           ...agent,
           activities: agent.activities ?? [],
           planSteps: agent.planSteps ?? [],
+          modelsUsed: agent.modelsUsed ?? [],
         },
       ],
       selectedAgentId:
@@ -362,6 +366,18 @@ export const useThreadStore = create<ThreadState>((set) => ({
       agents: s.agents.map((a) =>
         a.id === agentId ? { ...a, currentTurnId: turnId } : a,
       ),
+    })),
+
+  addAgentModel: (agentId, model) =>
+    set((s) => ({
+      agents: s.agents.map((a) => {
+        if (a.id !== agentId) return a;
+        const next = model.trim();
+        if (!next) return a;
+        const existing = a.modelsUsed ?? [];
+        if (existing.includes(next)) return a;
+        return { ...a, modelsUsed: [...existing, next] };
+      }),
     })),
 
   removeAgent: (agentId) =>

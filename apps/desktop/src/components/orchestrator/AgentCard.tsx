@@ -33,6 +33,11 @@ function snippetText(agent: Agent): string {
   return agent.lastAction;
 }
 
+function modelSummaryForCard(models: string[]): string {
+  if (models.length <= 2) return models.join(", ");
+  return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
+}
+
 export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compact }: AgentCardProps) {
   const [hovered, setHovered] = useState(false);
   const [stopHovered, setStopHovered] = useState(false);
@@ -208,7 +213,15 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
           compact ? "text-[9.5px]" : "text-[10.5px]",
         )}
       >
-        <span className="font-mono truncate">{agent.branch}</span>
+        <span className="font-mono truncate">
+          {agent.branch}
+          {(agent.modelsUsed?.length ?? 0) > 0 && (
+            <>
+              {" • "}
+              {modelSummaryForCard(agent.modelsUsed ?? [])}
+            </>
+          )}
+        </span>
         {!compact && (
           <div className="flex gap-2.5 shrink-0 ml-2 font-sans">
             {agent.time !== "—" && <span>{agent.time}</span>}

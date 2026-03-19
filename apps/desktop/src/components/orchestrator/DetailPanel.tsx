@@ -229,6 +229,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
   const threadId = agent.codexThreadId ?? null;
   const canArchive = Boolean(threadId);
+  const modelsUsed = agent.modelsUsed ?? [];
 
   function openArchiveConfirm() {
     if (!threadId || actionBusy) return;
@@ -330,6 +331,11 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             </svg>
             {agent.branch}
           </span>
+          {modelsUsed.length > 0 && (
+            <span className="text-[10px] text-text-faint">
+              {modelsUsed.join(", ")}
+            </span>
+          )}
           {agent.originUrl && (() => {
             const m = agent.originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
             if (!m) return null;

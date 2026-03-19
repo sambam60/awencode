@@ -19,11 +19,8 @@ import {
   Search,
   Pencil,
   Shield,
-  Play,
   Copy,
   Check,
-  FileEdit,
-  Lock,
   FolderTree,
 } from "lucide-react";
 import { ComposeArea, type Attachment } from "./ComposeArea";
@@ -42,6 +39,7 @@ import { generateThreadTitle, interruptTurn } from "@/lib/codex-turn";
 import { isAbsoluteFilePath } from "@/lib/dnd";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
+import { useViewStore } from "@/lib/stores/view-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import {
@@ -53,7 +51,6 @@ import {
   type Agent,
   type AgentActivity,
   type AgentMessage,
-  type ApprovalRequest,
 } from "@/lib/stores/thread-store";
 import { FileTreeView } from "./FileTreeView";
 
@@ -677,127 +674,6 @@ function ThinkingIndicator() {
   );
 }
 
-// ─── Approval banner ──────────────────────────────────────────────────────────
-
-function ApprovalBanner({
-  approval,
-  onResolved,
-}: {
-  approval: ApprovalRequest;
-  onResolved: () => void;
-}) {
-  const [responding, setResponding] = useState(false);
-
-  const respond = useCallback(
-    async (decision: string) => {
-      setResponding(true);
-      try {
-        if (approval.type === "permissions") {
-          await rpcRespond(approval.rpcId, {
-            permissions: approval.permissions ?? {},
-            scope: decision === "acceptForSession" ? "session" : "turn",
-          });
-        } else {
-          await rpcRespond(approval.rpcId, { decision });
-        }
-        onResolved();
-      } catch (e) {
-        console.error("Approval response failed", e);
-      } finally {
-        setResponding(false);
-      }
-    },
-    [approval, onResolved],
-  );
-
-  const icon =
-    approval.type === "commandExecution" ? (
-      <Play size={12} className="text-accent-amber" />
-    ) : approval.type === "fileChange" ? (
-      <FileEdit size={12} className="text-accent-amber" />
-    ) : (
-      <Lock size={12} className="text-accent-amber" />
-    );
-
-  const title =
-    approval.type === "commandExecution"
-      ? "run command"
-      : approval.type === "fileChange"
-        ? "apply file changes"
-        : "grant permissions";
-
-  return (
-    <div className="mb-4 border border-accent-amber/30 rounded-lg overflow-hidden bg-bg-card">
-      <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-light bg-bg-secondary">
-        <Shield size={11} className="text-accent-amber shrink-0" />
-        <span className="font-mono text-[10px] text-accent-amber uppercase tracking-widest">
-          Approval required
-        </span>
-      </div>
-
-      <div className="px-3.5 py-3 space-y-2">
-        <div className="flex items-start gap-2">
-          {icon}
-          <div className="flex-1 min-w-0">
-            <span className="font-sans text-[12.5px] text-text-primary">{title}</span>
-            {approval.reason && (
-              <p className="font-sans text-[11.5px] text-text-secondary mt-0.5 leading-snug">
-                {approval.reason}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {approval.command && (
-          <div className="rounded-md bg-bg-secondary border border-border-light px-3 py-2">
-            <pre className="font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-all leading-relaxed">
-              {approval.command}
-            </pre>
-            {approval.cwd && (
-              <span className="font-mono text-[9.5px] text-text-faint mt-1 block">
-                {approval.cwd}
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 pt-1">
-          <button
-            onClick={() => respond("accept")}
-            disabled={responding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-text-primary text-bg-card text-[11.5px] font-sans font-medium hover:opacity-90 transition-opacity duration-120 cursor-pointer disabled:opacity-50"
-          >
-            allow
-            <kbd className="font-mono text-[8.5px] opacity-60 ml-1">⌘⏎</kbd>
-          </button>
-          <button
-            onClick={() => respond("acceptForSession")}
-            disabled={responding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-default text-text-secondary text-[11.5px] font-sans hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50"
-          >
-            always allow
-          </button>
-          <button
-            onClick={() => respond("decline")}
-            disabled={responding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-default text-text-secondary text-[11.5px] font-sans hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50"
-          >
-            deny
-          </button>
-          <div className="flex-1" />
-          <button
-            onClick={() => respond("cancel")}
-            disabled={responding}
-            className="font-sans text-[11px] text-text-faint hover:text-text-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50"
-          >
-            cancel turn
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Git button ───────────────────────────────────────────────────────────────
 
 function GitButton({
@@ -1240,7 +1116,12 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
   const projectPath = useAppStore((s) => s.projectPath);
+  const setProjectPath = useAppStore((s) => s.setProjectPath);
+  const view = useViewStore((s) => s.view);
+  const setView = useViewStore((s) => s.setView);
+  const addAgent = useThreadStore((s) => s.addAgent);
   const setAgentCodexThreadId = useThreadStore((s) => s.setAgentCodexThreadId);
+  const addAgentModel = useThreadStore((s) => s.addAgentModel);
   const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
@@ -1319,6 +1200,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           const selected = getSelectedModel();
           const res = await rpcRequest<{
             thread: { id: string; name?: string | null };
+            model?: string | null;
           }>("thread/start", {
             cwd: projectPath ?? undefined,
             model: selected.id,
@@ -1326,6 +1208,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           });
           threadId = res?.thread?.id;
           if (threadId) setAgentCodexThreadId(agent.id, threadId);
+          addAgentModel(agent.id, res?.model ?? selected.id);
           const serverName =
             typeof res?.thread?.name === "string" ? res.thread.name.trim() : "";
           if (serverName.length > 0) {
@@ -1416,6 +1299,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       projectPath,
       appendAgentMessage,
       setAgentCodexThreadId,
+      addAgentModel,
       updateAgentTitle,
     ],
   );
@@ -1511,6 +1395,41 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
 
   const projectName = projectPath?.split("/").pop() ?? "";
 
+  const handleNewChat = useCallback(async () => {
+    const id = `agent-${Date.now()}`;
+    let branch = "";
+    let originUrl: string | undefined;
+    const cwd = useAppStore.getState().projectPath;
+    if (cwd) {
+      try {
+        const info = await invoke<{ branch?: string | null; originUrl?: string | null }>(
+          "get_git_info",
+          { path: cwd },
+        );
+        branch = info?.branch ?? "";
+        originUrl = info?.originUrl ?? undefined;
+      } catch {
+        // ignore
+      }
+    }
+    addAgent({
+      id,
+      title: "New thread",
+      branch,
+      status: "active",
+      lastAction: "Waiting for your first message",
+      progress: 0,
+      time: "—",
+      tokens: "—",
+      files: [],
+      pr: null,
+      messages: [],
+      blocked: false,
+      originUrl,
+    });
+    setView("chat");
+  }, [addAgent, setView]);
+
   return (
     <div className="flex flex-col h-full bg-bg-primary overflow-hidden">
       {/* Top bar — spans full width */}
@@ -1518,13 +1437,43 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         data-tauri-drag-region
         className="h-12 shrink-0 flex items-center pl-[92px] pr-4 gap-3 border-b border-border-light select-none"
       >
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120 shrink-0 mr-1"
-        >
-          <ChevronLeft size={12} />
-          <span className="font-sans text-[10px]">Back</span>
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setProjectPath(null);
+              setView("home");
+            }}
+            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            title="Home"
+          >
+            <img
+              src={view === "home" ? "/house_icon_filled.svg" : "/house_icon.svg"}
+              alt=""
+              className="h-3 w-3 shrink-0 opacity-85 dark:invert"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("settings")}
+            className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
+            title="Settings"
+          >
+            <img
+              src={view === "settings" ? "/gear_filled.svg" : "/gear.svg"}
+              alt=""
+              className="h-3 w-3 shrink-0 opacity-85 dark:invert"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={handleNewChat}
+            className="p-1.5 rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
+            title="New chat (adds to Active)"
+          >
+            <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
+          </button>
+        </div>
 
         <div className="h-4 w-px bg-border-light shrink-0" />
 
@@ -1609,6 +1558,17 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             onBranchCreated={(b) => updateAgentGitInfo(agent.id, { branch: b })}
           />
         </div>
+
+        <div className="h-4 w-px bg-border-light shrink-0" />
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-text-faint hover:text-text-secondary cursor-pointer transition-colors duration-120 shrink-0"
+        >
+          <ChevronLeft size={12} />
+          <span className="font-sans text-[10px]">Back</span>
+        </button>
       </div>
 
       {/* Content area — chat with overlaying file tree */}
@@ -1708,14 +1668,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                 </>
               )}
 
-              {/* Approval banner — inline when server needs permission */}
-              {agent.pendingApproval && (
-                <ApprovalBanner
-                  approval={agent.pendingApproval}
-                  onResolved={clearApproval}
-                />
-              )}
-
               {/* Thinking state — only when no inline reasoning card yet */}
               {isThinking &&
                 !agent.pendingApproval &&
@@ -1732,118 +1684,171 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         <ChatEdgeBlurOverlays />
       </div>
 
-      {/* Compose + action bar — pulled up so chat canvas (bg-primary) doesn’t show as a band above the card */}
+      {/* Compose + action pills — pulled up so chat canvas doesn't show as a band */}
       <div className="max-w-[680px] mx-auto w-full px-6 pb-4 shrink-0 relative z-30 -mt-20 bg-transparent">
 
-        {/* Action bar — rendered first so it sits behind compose in z-order */}
-        {showBar && (agent.files.length > 0 || hasPendingApproval) && (
-          <div className="absolute bottom-0 left-6 right-6 pb-4 flex justify-center pointer-events-none">
-            {/* Narrower than compose: 24px inset each side */}
-            <div className="w-full mx-6 pointer-events-auto">
-              <div className="flex items-center h-9 rounded-b-lg border border-t-0 border-border-default bg-transparent overflow-hidden">
+        {/* Action pills row — floats above compose */}
+        {showBar && (
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
 
-                {/* Left — file count */}
-                <button className="flex items-center gap-1.5 pl-3 pr-2 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer shrink-0">
-                  <ChevronDown size={11} className="text-text-faint" />
-                  <span className="font-sans text-[12px] text-text-secondary">
-                    {agent.files.length} {agent.files.length === 1 ? "file" : "files"}
-                  </span>
-                </button>
+            {/* Diff stats pill — only in review state with changed files */}
+            {isReview && agent.files.length > 0 && (
+              <button className="flex items-center gap-2 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer group">
+                <span className="font-sans text-[12px] text-text-secondary group-hover:text-text-primary transition-colors duration-150">
+                  Review
+                </span>
+                <span className="font-mono text-[11.5px] font-medium text-accent-green">
+                  +{agent.files.length * 47}
+                </span>
+                <span className="font-mono text-[11.5px] font-medium text-accent-red">
+                  -{agent.files.length * 12}
+                </span>
+              </button>
+            )}
 
-                <div className="flex-1" />
+            {/* Accept all pill */}
+            {isReview && (
+              <button className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-accent-green/40 hover:bg-accent-green/10 hover:border-accent-green/70 transition-colors duration-150 cursor-pointer">
+                <svg width="9" height="9" viewBox="0 0 9 9" fill="none" className="shrink-0">
+                  <path d="M1.5 4.5L3.75 6.75L7.5 2.25" stroke="var(--accent-green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span className="font-sans text-[12px] text-accent-green font-medium">
+                  Accept all
+                </span>
+              </button>
+            )}
 
-                {/* Pending approval indicator */}
-                {hasPendingApproval && (
-                  <div className="flex items-center gap-1.5 px-3 h-full border-r border-border-light">
-                    <Shield size={10} className="text-accent-amber shrink-0" />
-                    <span className="font-mono text-[10px] text-accent-amber uppercase tracking-wider">
-                      Waiting for approval
-                    </span>
-                  </div>
-                )}
+            {/* Reject all pill */}
+            {isReview && (
+              <button className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-accent-red/40 hover:bg-accent-red/10 hover:border-accent-red/70 transition-colors duration-150 cursor-pointer">
+                <svg width="9" height="9" viewBox="0 0 9 9" fill="none" className="shrink-0">
+                  <path d="M2 2L7 7M7 2L2 7" stroke="var(--accent-red)" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+                <span className="font-sans text-[12px] text-accent-red font-medium">
+                  Reject all
+                </span>
+              </button>
+            )}
 
-                {/* Running: Stop */}
-                {isRunning && (
-                  <button
-                    onClick={handleStop}
-                    disabled={stopping || !agent.currentTurnId}
-                    className="flex items-center gap-1.5 px-3 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer disabled:opacity-50 border-r border-border-light"
-                  >
-                    <span className="font-sans text-[12px] text-text-secondary">
-                      {stopping ? "Stopping…" : "Stop"}
-                    </span>
-                    <kbd className="font-mono text-[9px] text-text-faint bg-bg-primary border border-border-light rounded px-1 py-0.5 leading-none">
-                      ⌃C
-                    </kbd>
-                  </button>
-                )}
+            {/* Allow approval pill */}
+            {hasPendingApproval && (
+              <button
+                onClick={() => {
+                  if (!agent.pendingApproval) return;
+                  const approval = agent.pendingApproval;
+                  if (approval.type === "permissions") {
+                    rpcRespond(approval.rpcId, { permissions: approval.permissions ?? {}, scope: "turn" }).then(clearApproval).catch(console.error);
+                  } else {
+                    rpcRespond(approval.rpcId, { decision: "accept" }).then(clearApproval).catch(console.error);
+                  }
+                }}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-accent-amber/40 hover:bg-accent-amber/10 hover:border-accent-amber/70 transition-colors duration-150 cursor-pointer"
+              >
+                <Shield size={10} className="text-accent-amber shrink-0" />
+                <span className="font-sans text-[12px] text-accent-amber font-medium">
+                  Allow
+                </span>
+                <kbd className="font-mono text-[9px] text-accent-amber/60 bg-accent-amber/10 border border-accent-amber/20 rounded px-1 leading-none py-0.5">
+                  ⌘⏎
+                </kbd>
+              </button>
+            )}
 
-                {/* Review state: ✓ Accept all / ✕ Reject all */}
-                {isReview && (
-                  <>
-                    <button className="flex items-center gap-1.5 px-3 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer border-r border-border-light group/accept">
-                      <div className="w-3.5 h-3.5 rounded-full bg-accent-green/15 flex items-center justify-center shrink-0">
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path d="M1.5 4L3.5 6L6.5 2" stroke="var(--accent-green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      </div>
-                      <span className="font-sans text-[12px] text-text-secondary group-hover/accept:text-text-primary transition-colors duration-120">
-                        Accept all
-                      </span>
-                    </button>
-                    <button className="flex items-center gap-1.5 px-3 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer border-r border-border-light group/reject">
-                      <div className="w-3.5 h-3.5 rounded-full bg-accent-red/15 flex items-center justify-center shrink-0">
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <path d="M2 2L6 6M6 2L2 6" stroke="var(--accent-red)" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                      </div>
-                      <span className="font-sans text-[12px] text-text-secondary group-hover/reject:text-text-primary transition-colors duration-120">
-                        Reject all
-                      </span>
-                    </button>
-                  </>
-                )}
+            {/* Always allow pill */}
+            {hasPendingApproval && (
+              <button
+                onClick={() => {
+                  if (!agent.pendingApproval) return;
+                  const approval = agent.pendingApproval;
+                  if (approval.type === "permissions") {
+                    rpcRespond(approval.rpcId, { permissions: approval.permissions ?? {}, scope: "session" }).then(clearApproval).catch(console.error);
+                  } else {
+                    rpcRespond(approval.rpcId, { decision: "acceptForSession" }).then(clearApproval).catch(console.error);
+                  }
+                }}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer"
+              >
+                <span className="font-sans text-[12px] text-text-secondary">
+                  Always allow
+                </span>
+              </button>
+            )}
 
-                {/* Blocked: Unblock */}
-                {isBlocked && (
-                  <button className="flex items-center gap-1.5 px-3 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer border-r border-border-light">
-                    <span className="font-sans text-[12px] text-text-secondary hover:text-text-primary transition-colors duration-120">
-                      Unblock
-                    </span>
-                  </button>
-                )}
+            {/* Deny approval pill */}
+            {hasPendingApproval && (
+              <button
+                onClick={() => {
+                  if (!agent.pendingApproval) return;
+                  rpcRespond(agent.pendingApproval.rpcId, { decision: "decline" }).then(clearApproval).catch(console.error);
+                }}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer"
+              >
+                <span className="font-sans text-[12px] text-text-secondary">
+                  Deny
+                </span>
+              </button>
+            )}
 
-                {/* Review pill */}
-                <button className="flex items-center px-3 h-full bg-bg-card hover:bg-bg-primary transition-colors duration-120 cursor-pointer border-l border-border-light">
-                  <span className="font-sans text-[12px] font-medium text-text-primary">
-                    Review
-                  </span>
-                </button>
+            {/* Cancel turn pill */}
+            {hasPendingApproval && (
+              <button
+                onClick={() => {
+                  if (!agent.pendingApproval) return;
+                  rpcRespond(agent.pendingApproval.rpcId, { decision: "cancel" }).then(clearApproval).catch(console.error);
+                }}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer ml-auto"
+              >
+                <span className="font-sans text-[12px] text-text-faint hover:text-text-secondary transition-colors duration-150">
+                  Cancel turn
+                </span>
+              </button>
+            )}
 
-              </div>
-            </div>
+            {/* Stop pill */}
+            {isRunning && (
+              <button
+                onClick={handleStop}
+                disabled={stopping || !agent.currentTurnId}
+                className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer disabled:opacity-50 ml-auto"
+              >
+                <span className="font-sans text-[12px] text-text-secondary">
+                  {stopping ? "Stopping…" : "Stop"}
+                </span>
+                <kbd className="font-mono text-[9px] text-text-faint bg-bg-secondary border border-border-light rounded px-1 leading-none py-0.5">
+                  ⌃C
+                </kbd>
+              </button>
+            )}
+
+            {/* Blocked: Unblock pill */}
+            {isBlocked && (
+              <button className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer ml-auto">
+                <span className="font-sans text-[12px] text-text-secondary">
+                  Unblock
+                </span>
+              </button>
+            )}
+
           </div>
         )}
 
-        {/* Compose — sits on top, with bottom padding to reveal the bar beneath */}
-        <div className={cn(showBar && (agent.files.length > 0 || hasPendingApproval) ? "pb-7" : "")}>
-          {canCompose ? (
-            <ComposeArea
-              onSend={handleSend}
-              emptyThread={
-                agent.messages.length === 0 && !agent.streamingBuffer
-              }
-            />
-          ) : (
-            <div className="border border-border-light rounded-lg px-4 py-3 text-center">
-              <span className="font-mono text-[10.5px] text-text-faint">
-                {agent.status === "queued"
-                  ? "agent is queued — start it to begin a conversation"
-                  : "deployed — read only"}
-              </span>
-            </div>
-          )}
-        </div>
+        {/* Compose */}
+        {canCompose ? (
+          <ComposeArea
+            onSend={handleSend}
+            emptyThread={
+              agent.messages.length === 0 && !agent.streamingBuffer
+            }
+          />
+        ) : (
+          <div className="border border-border-light rounded-lg px-4 py-3 text-center">
+            <span className="font-mono text-[10.5px] text-text-faint">
+              {agent.status === "queued"
+                ? "agent is queued — start it to begin a conversation"
+                : "deployed — read only"}
+            </span>
+          </div>
+        )}
 
       </div>
 

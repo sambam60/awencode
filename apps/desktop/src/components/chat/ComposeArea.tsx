@@ -323,14 +323,37 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
 
   const canSend = !disabled && (value.trim().length > 0 || attachments.length > 0);
 
+  // Expand only after enough content — 30 chars of text OR any attachment
+  const EXPAND_THRESHOLD = 30;
+  const isExpanded = value.length >= EXPAND_THRESHOLD || attachments.length > 0;
+
+  // When transitioning into expanded state, resize the textarea to fit existing content
+  useLayoutEffect(() => {
+    if (isExpanded && textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+      textareaRef.current.focus();
+    }
+  }, [isExpanded]);
+
+  // Smoothly interpolate border-radius: pill (9999px) → card (16px)
+  // Use inline style so CSS can actually transition the numeric value
+  const borderRadius = isExpanded ? "16px" : "9999px";
+
   return (
     <div
       ref={composeRootRef}
       className={cn(
-        "bg-bg-card rounded-2xl border border-transparent shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-120",
-        dragHighlight &&
-          "border-accent-blue shadow-[0_1px_4px_rgba(0,0,0,0.04),inset_0_0_0_1px_var(--text-links)]",
+        "overflow-hidden bg-bg-card border border-border-default shadow-[0_1px_4px_rgba(0,0,0,0.04)]",
+        dragHighlight && "border-accent-blue shadow-[inset_0_0_0_1px_var(--accent-blue)]",
       )}
+      style={{
+        borderRadius,
+        clipPath: `inset(0 round ${borderRadius})`,
+        willChange: "border-radius, clip-path",
+        transition:
+          "border-radius 460ms cubic-bezier(0.16,1,0.3,1), clip-path 460ms cubic-bezier(0.16,1,0.3,1), border-color 180ms ease-out, box-shadow 180ms ease-out",
+      }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -346,81 +369,134 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
         onChange={handleFileChange}
       />
 
-      <div className="flex flex-col">
-        {/* Attachment previews */}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
-            {attachments.map((att, i) => {
-              const isImage = att.mime?.startsWith("image/");
-              const isFolder = att.isDirectory === true;
-              const setiKey = !isFolder && !isImage ? resolveSetiKey(att.name) : null;
-              return (
-                <div
-                  key={i}
-                  className="relative flex items-center gap-1.5 bg-bg-secondary border border-border-light rounded-md px-2 py-1.5 max-w-[160px] group"
-                >
-                  {isImage && att.dataUrl ? (
-                    <img
-                      src={att.dataUrl}
-                      alt={att.name}
-                      className="w-5 h-5 rounded object-cover shrink-0"
-                    />
-                  ) : isImage ? (
-                    <Image size={13} className="text-text-faint shrink-0" />
-                  ) : isFolder ? (
-                    <FolderIcon open={false} size={15} />
-                  ) : (
-                    <SetiIcon iconKey={setiKey!} isDark={isDark} size={15} />
-                  )}
-                  <span className="font-sans text-[12px] font-normal text-text-secondary truncate">
-                    {att.name}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(i)}
-                    className="ml-0.5 text-text-faint hover:text-text-secondary transition-colors duration-120 cursor-pointer shrink-0"
+      {/* Expanding content area — grid-rows trick for fluid height animation */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateRows: isExpanded ? "1fr" : "0fr",
+          transition: "grid-template-rows 440ms cubic-bezier(0.16,1,0.3,1)",
+        }}
+      >
+        <div
+          className="overflow-hidden"
+          style={{
+            opacity: isExpanded ? 1 : 0.72,
+            transform: isExpanded ? "translateY(0px)" : "translateY(-3px)",
+            transition:
+              "opacity 280ms ease-out, transform 440ms cubic-bezier(0.16,1,0.3,1)",
+          }}
+        >
+          {/* Attachment chips */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
+              {attachments.map((att, i) => {
+                const isImage = att.mime?.startsWith("image/");
+                const isFolder = att.isDirectory === true;
+                const setiKey = !isFolder && !isImage ? resolveSetiKey(att.name) : null;
+                return (
+                  <div
+                    key={i}
+                    className="relative flex items-center gap-1.5 bg-bg-secondary border border-border-light rounded-md px-2 py-1.5 max-w-[160px] group"
                   >
-                    <X size={10} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="relative px-4 pt-3 pb-2">
-          {!value && (
-            <span
-              aria-hidden
-              className="pointer-events-none absolute left-4 right-4 top-3 z-0 text-[12.5px] leading-[1.4] text-text-faint"
-            >
-              {emptyThread ? EMPTY_THREAD_PLACEHOLDER : FOLLOW_UP_PLACEHOLDER}
-            </span>
+                    {isImage && att.dataUrl ? (
+                      <img
+                        src={att.dataUrl}
+                        alt={att.name}
+                        className="w-5 h-5 rounded object-cover shrink-0"
+                      />
+                    ) : isImage ? (
+                      <Image size={13} className="text-text-faint shrink-0" />
+                    ) : isFolder ? (
+                      <FolderIcon open={false} size={15} />
+                    ) : (
+                      <SetiIcon iconKey={setiKey!} isDark={isDark} size={15} />
+                    )}
+                    <span className="font-sans text-[12px] font-normal text-text-secondary truncate">
+                      {att.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(i)}
+                      className="ml-0.5 text-text-faint hover:text-text-secondary transition-colors duration-120 cursor-pointer shrink-0"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           )}
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onInput={handleInput}
-            onDragOver={handleDragOver}
-            placeholder=" "
-            disabled={disabled}
-            rows={1}
-            className="relative z-10 w-full bg-transparent border-none outline-none resize-none text-[12.5px] text-text-primary py-0 align-baseline max-h-32 leading-[1.4] placeholder:text-transparent"
-            style={{ minHeight: "1.4em" }}
-          />
+
+          {/* Expanded textarea */}
+          <div className={cn("px-4 pb-1", attachments.length > 0 ? "pt-1" : "pt-3")}>
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onInput={handleInput}
+              onDragOver={handleDragOver}
+              disabled={disabled}
+              rows={1}
+              className="w-full bg-transparent border-none outline-none resize-none text-[13px] text-text-primary py-0 leading-[1.5] max-h-52 overflow-y-auto"
+              style={{ minHeight: "1.5em" }}
+            />
+          </div>
         </div>
-        <div className="flex items-center gap-2 px-3 pb-3 pt-1">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => fileInputRef.current?.click()}
-            className="p-1.5 text-text-secondary hover:text-text-primary rounded-md transition-colors duration-120 cursor-pointer disabled:opacity-50"
-            aria-label="Add attachment"
+      </div>
+
+      {/* Single-row pill bar — always visible */}
+      <div className="flex items-center gap-1 px-2 py-2">
+        {/* + button */}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center justify-center w-7 h-7 text-text-secondary hover:text-text-primary rounded-full transition-colors duration-120 cursor-pointer disabled:opacity-50 shrink-0"
+          aria-label="Add attachment"
+        >
+          <Plus size={15} strokeWidth={1.5} />
+        </button>
+
+        {/* Inline input area — visible text + placeholder when collapsed */}
+        <div className="flex-1 min-w-0 relative">
+          {/* Placeholder fades out as user types */}
+          <span
+            aria-hidden
+            className="absolute inset-0 flex items-center text-[12.5px] leading-[1.5] text-text-faint select-none pointer-events-none transition-opacity duration-150"
+            style={{ opacity: value.length > 0 ? 0 : 1 }}
           >
-            <Plus size={16} strokeWidth={1.5} />
-          </button>
+            {emptyThread ? EMPTY_THREAD_PLACEHOLDER : FOLLOW_UP_PLACEHOLDER}
+          </span>
+          {/* Visible single-line input — shown only when collapsed, lets user see what they're typing */}
+          {!isExpanded && (
+            <input
+              type="text"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              disabled={disabled}
+              className="relative w-full bg-transparent border-none outline-none text-[12.5px] text-text-primary leading-[1.5] py-0"
+              aria-label={emptyThread ? EMPTY_THREAD_PLACEHOLDER : FOLLOW_UP_PLACEHOLDER}
+            />
+          )}
+          {/* When expanded, clicking this area focuses the textarea above */}
+          {isExpanded && (
+            <div
+              className="w-full h-full cursor-text"
+              onClick={() => textareaRef.current?.focus()}
+            />
+          )}
+        </div>
+
+        {/* Right-side controls */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Model selector */}
           <div className="relative">
             <button
               ref={modelAnchorRef}
@@ -430,10 +506,10 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
                 setModelOpen((v) => !v);
               }}
               disabled={disabled}
-              className="flex items-center gap-1 text-[12px] text-text-secondary hover:text-text-primary font-medium rounded-md py-1.5 px-2 transition-colors duration-120 cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1 text-[11.5px] text-text-secondary hover:text-text-primary font-medium rounded-full py-1 px-2.5 transition-colors duration-120 cursor-pointer disabled:opacity-50"
             >
               {selectedModel.name}
-              <ChevronDown size={12} className="text-text-tertiary" />
+              <ChevronDown size={11} className="text-text-tertiary" />
             </button>
             <GlassMenuPortal
               open={modelOpen}
@@ -462,6 +538,8 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
               ))}
             </GlassMenuPortal>
           </div>
+
+          {/* Reasoning selector */}
           <div className="relative">
             <button
               ref={reasoningAnchorRef}
@@ -471,10 +549,10 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
                 setReasoningOpen((v) => !v);
               }}
               disabled={disabled}
-              className="flex items-center gap-1 text-[12px] text-text-secondary hover:text-text-primary font-medium rounded-md py-1.5 px-2 transition-colors duration-120 cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1 text-[11.5px] text-text-secondary hover:text-text-primary font-medium rounded-full py-1 px-2.5 transition-colors duration-120 cursor-pointer disabled:opacity-50"
             >
-              {REASONING_LEVELS.find((r) => r.id === selectedReasoningEffort)?.label ?? "medium"}
-              <ChevronDown size={12} className="text-text-tertiary" />
+              {REASONING_LEVELS.find((r) => r.id === selectedReasoningEffort)?.label ?? "Medium"}
+              <ChevronDown size={11} className="text-text-tertiary" />
             </button>
             <GlassMenuPortal
               open={reasoningOpen}
@@ -503,28 +581,31 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
               ))}
             </GlassMenuPortal>
           </div>
-          <div className="flex-1 min-w-0" />
+
+          {/* Mic */}
           <button
             type="button"
             disabled={disabled}
-            className="p-1.5 text-text-tertiary hover:text-text-secondary rounded-md transition-colors duration-120 cursor-pointer disabled:opacity-50"
+            className="flex items-center justify-center w-7 h-7 text-text-tertiary hover:text-text-secondary rounded-full transition-colors duration-120 cursor-pointer disabled:opacity-50"
             aria-label="Voice input"
           >
-            <Mic size={16} strokeWidth={1.5} />
+            <Mic size={15} strokeWidth={1.5} />
           </button>
+
+          {/* Send — always visible, grey when empty, black when ready */}
           <button
             type="button"
             onClick={handleSubmit}
             disabled={!canSend}
             className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-120 cursor-pointer disabled:opacity-50",
+              "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
               canSend
                 ? "bg-text-primary text-bg-card hover:opacity-90"
-                : "bg-bg-secondary text-text-faint cursor-default",
+                : "bg-bg-secondary text-text-faint",
             )}
             aria-label="Send"
           >
-            <ArrowUp size={18} strokeWidth={2} />
+            <ArrowUp size={15} strokeWidth={2} />
           </button>
         </div>
       </div>

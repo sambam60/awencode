@@ -110,6 +110,7 @@ export function useCodexNotifications() {
   const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
   const setAgentPlan = useThreadStore((s) => s.setAgentPlan);
   const setAgentCurrentTurnId = useThreadStore((s) => s.setAgentCurrentTurnId);
+  const addAgentModel = useThreadStore((s) => s.addAgentModel);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -175,6 +176,18 @@ export function useCodexNotifications() {
           setAgentCurrentTurnId(agentId, turnId);
           setAgentTurnInProgress(agentId, true);
           setAgentStatus(agentId, "active");
+          break;
+        }
+
+        case "model/rerouted":
+        case "model/routed":
+        case "model/reroute": {
+          const fromModel =
+            typeof params.fromModel === "string" ? params.fromModel : null;
+          const toModel =
+            typeof params.toModel === "string" ? params.toModel : null;
+          if (fromModel) addAgentModel(agentId, fromModel);
+          if (toModel) addAgentModel(agentId, toModel);
           break;
         }
 
@@ -399,6 +412,7 @@ export function useCodexNotifications() {
     updateAgentTitle,
     setAgentPlan,
     setAgentCurrentTurnId,
+    addAgentModel,
   ]);
 
   useEffect(() => {
