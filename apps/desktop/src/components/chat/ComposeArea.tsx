@@ -21,6 +21,7 @@ import {
 import { FolderIcon, resolveSetiKey, SetiIcon } from "@/lib/seti-icons";
 import { useIsDarkMode } from "@/lib/use-is-dark-mode";
 import { useSettingsStore, CURATED_MODELS, type ReasoningEffort } from "@/lib/stores/settings-store";
+import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 
 export interface Attachment {
   path: string;
@@ -38,6 +39,10 @@ interface ComposeAreaProps {
   disabled?: boolean;
   /** When true, show the new-thread placeholder (Ask anything, @ to add files, / for commands). */
   emptyThread?: boolean;
+  /** Thread id — used with `persistQueuedDraft` to save prompt text per project. */
+  agentId: string;
+  /** Persist prompt text for Queue threads (survives leaving chat / app restart for this project). */
+  persistQueuedDraft?: boolean;
 }
 
 const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
@@ -127,8 +132,29 @@ function GlassMenuPortal({
   );
 }
 
-export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAreaProps) {
-  const [value, setValue] = useState("");
+export function ComposeArea({
+  onSend,
+  disabled,
+  emptyThread = false,
+  agentId,
+  persistQueuedDraft = false,
+}: ComposeAreaProps) {
+  const setComposeDraft = useChatUiStore((s) => s.setComposeDraft);
+  const [value, setValue] = useState(() =>
+    persistQueuedDraft
+      ? (useChatUiStore.getState().composeDraftByAgentId[agentId] ?? "")
+      : "",
+  );
+
+  const syncValue = useCallback(
+    (next: string) => {
+      setValue(next);
+      if (persistQueuedDraft) {
+        setComposeDraft(agentId, next);
+      }
+    },
+    [persistQueuedDraft, agentId, setComposeDraft],
+  );
   const [modelOpen, setModelOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -432,7 +458,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
             <textarea
               ref={textareaRef}
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => syncValue(e.target.value)}
               onKeyDown={handleKeyDown}
               onInput={handleInput}
               onDragOver={handleDragOver}
@@ -473,7 +499,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
             <input
               type="text"
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => syncValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

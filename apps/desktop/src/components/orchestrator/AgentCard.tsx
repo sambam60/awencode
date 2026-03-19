@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, Square } from "lucide-react";
+import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, Play, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppStore } from "@/lib/stores/app-store";
 import { interruptTurn } from "@/lib/codex-turn";
+import { sendChatTurn } from "@/lib/send-chat-turn";
+import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import type { Agent } from "@/lib/stores/thread-store";
 
 interface AgentCardProps {
@@ -23,13 +25,17 @@ function lastAgentMessageContent(agent: Agent): string | undefined {
   return undefined;
 }
 
-function snippetText(agent: Agent): string {
+function snippetText(agent: Agent, queuedDraft: string): string {
   const buf = agent.streamingBuffer?.trim();
   if (buf) return buf;
   const last = lastAgentMessageContent(agent);
   if (last) {
     const tail = last.length > 280 ? `…${last.slice(-280)}` : last;
     return tail;
+  }
+  const d = queuedDraft.trim();
+  if (agent.status === "queued" && d.length > 0) {
+    return d.length > 280 ? `${d.slice(0, 277)}…` : d;
   }
   return agent.lastAction;
 }
@@ -144,10 +150,12 @@ function MetaItem({ icon, children }: { icon: React.ReactNode; children: React.R
 export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compact }: AgentCardProps) {
   const [hovered, setHovered] = useState(false);
   const [stopHovered, setStopHovered] = useState(false);
+  const [playSending, setPlaySending] = useState(false);
   const snippetRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
   const projectPath = useAppStore((s) => s.projectPath);
   const projectName = useAppStore((s) => s.projectName);
+  const composeDraft = useChatUiStore((s) => s.composeDraftByAgentId[agent.id] ?? "");
 
   const working = Boolean(agent.turnInProgress && agent.codexThreadId);
   const planLen = agent.planSteps?.length ?? 0;
@@ -185,7 +193,22 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
   };
 
   const showHoverInfo = hovered && !working;
+  const showQueuedStrip = agent.status === "queued" && !working;
+  const canPlayQueued =
+    composeDraft.trim().length > 0 && !playSending;
   const contextPct = contextPercentFromAgent(agent);
+
+  const handlePlayQueued = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canPlayQueued) return;
+    const text = composeDraft.trim();
+    setPlaySending(true);
+    try {
+      await sendChatTurn(agent.id, text, []);
+    } finally {
+      setPlaySending(false);
+    }
+  };
 
   return (
     <div
@@ -238,7 +261,40 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
           </button>
         </div>
       )}
-      {showHoverInfo && (
+      {showQueuedStrip && (
+        <div className="absolute top-2.5 right-2.5 z-[1] flex items-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDetails(agent.id);
+            }}
+            className="w-5 h-5 flex items-center justify-center rounded text-[11px] font-medium text-text-tertiary hover:text-text-primary hover:bg-bg-secondary border border-transparent hover:border-border transition-colors duration-120 cursor-pointer"
+            title="View details"
+          >
+            i
+          </button>
+          <button
+            type="button"
+            onClick={handlePlayQueued}
+            disabled={!canPlayQueued}
+            className={cn(
+              "w-5 h-5 flex items-center justify-center rounded transition-colors duration-120",
+              canPlayQueued
+                ? "text-text-primary hover:bg-bg-secondary border border-border-default hover:border-border-focus cursor-pointer"
+                : "text-text-faint cursor-not-allowed opacity-50",
+            )}
+            title={canPlayQueued ? "Send prompt and start" : "Type a prompt in chat first"}
+          >
+            {playSending ? (
+              <Loader2 size={12} className="animate-spin shrink-0" strokeWidth={2} />
+            ) : (
+              <Play size={12} strokeWidth={2} className="shrink-0" />
+            )}
+          </button>
+        </div>
+      )}
+      {showHoverInfo && !showQueuedStrip && (
         <button
           type="button"
           onClick={(e) => {
@@ -264,7 +320,8 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
       <div
         className={cn(
           "flex justify-between items-start mb-1 gap-2",
-          (working || showHoverInfo) && !compact && "pr-14",
+          !compact &&
+            (showQueuedStrip ? "pr-[52px]" : (working || showHoverInfo) && "pr-14"),
         )}
       >
         <div
@@ -296,7 +353,7 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
             ref={snippetRef}
             className="hide-scrollbar max-h-[3.9em] overflow-y-auto overflow-x-hidden px-2 py-1.5 text-[12px] leading-snug text-text-secondary whitespace-pre-wrap break-words"
           >
-            {snippetText(agent)}
+            {snippetText(agent, composeDraft)}
           </div>
         </div>
       )}

@@ -35,17 +35,13 @@ import { statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { rpcRequest, rpcRespond } from "@/lib/rpc-client";
-import { generateThreadTitle, interruptTurn } from "@/lib/codex-turn";
-import { isAbsoluteFilePath } from "@/lib/dnd";
+import { interruptTurn } from "@/lib/codex-turn";
+import { sendChatTurn } from "@/lib/send-chat-turn";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
-import {
-  getSelectedModel,
-  getSelectedReasoningEffort,
-} from "@/lib/stores/settings-store";
 import {
   STREAMING_THINKING_ACTIVITY_ID,
   type Agent,
@@ -57,21 +53,6 @@ import { FileTreeView } from "./FileTreeView";
 interface ChatViewProps {
   agent: Agent;
   onBack: () => void;
-}
-
-const NEW_THREAD_TITLE = "New thread";
-
-function truncateChatTitle(text: string): string {
-  const t = text.trim();
-  if (!t) return "";
-  return t.length > 56 ? `${t.slice(0, 53)}…` : t;
-}
-
-/** First line of what we show in the thread, suitable for a default chat title. */
-function titleFromFirstSendDisplay(displayContent: string): string | null {
-  const line = displayContent.split("\n")[0]?.trim() ?? "";
-  const next = truncateChatTitle(line);
-  return next.length > 0 ? next : null;
 }
 
 // ─── File chip ────────────────────────────────────────────────────────────────
@@ -1121,13 +1102,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const addAgent = useThreadStore((s) => s.addAgent);
-  const setAgentCodexThreadId = useThreadStore((s) => s.setAgentCodexThreadId);
-  const addAgentModel = useThreadStore((s) => s.addAgentModel);
-  const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
-  const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
-  const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
 
   const clearApproval = useCallback(() => {
     setAgentPendingApproval(agent.id, null);
@@ -1170,146 +1146,9 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
 
   const handleSend = useCallback(
     async (message: string, attachments: Attachment[]) => {
-      const trimmed = message.trim();
-      if (!trimmed && attachments.length === 0) return;
-
-      const wasUnsetTitle = agent.title === NEW_THREAD_TITLE;
-      const firstUserSend = agent.messages.length === 0;
-
-      const displayContent =
-        trimmed ||
-        (attachments.length > 0
-          ? `[${attachments.map((a) => a.name).join(", ")}]`
-          : "");
-      const imageUrls = attachments
-        .filter((a) => a.mime?.startsWith("image/") && a.dataUrl)
-        .map((a) => a.dataUrl as string);
-      appendAgentMessage(agent.id, {
-        role: "you",
-        content: displayContent,
-        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-      });
-      if (firstUserSend && agent.status === "queued") {
-        setAgentStatus(agent.id, "active");
-      }
-
-      const provisionalTitle = wasUnsetTitle
-        ? titleFromFirstSendDisplay(displayContent)
-        : null;
-      if (provisionalTitle) {
-        updateAgentTitle(agent.id, provisionalTitle);
-      }
-
-      let threadId = agent.codexThreadId;
-      if (!threadId) {
-        try {
-          const selected = getSelectedModel();
-          const res = await rpcRequest<{
-            thread: { id: string; name?: string | null };
-            model?: string | null;
-          }>("thread/start", {
-            cwd: projectPath ?? undefined,
-            model: selected.id,
-            modelProvider: selected?.provider,
-          });
-          threadId = res?.thread?.id;
-          if (threadId) setAgentCodexThreadId(agent.id, threadId);
-          addAgentModel(agent.id, res?.model ?? selected.id);
-          const serverName =
-            typeof res?.thread?.name === "string" ? res.thread.name.trim() : "";
-          if (serverName.length > 0) {
-            const fromServer = truncateChatTitle(serverName);
-            if (fromServer.length > 0) {
-              updateAgentTitle(agent.id, fromServer);
-            }
-          }
-        } catch (e) {
-          console.error("thread/start failed", e);
-          return;
-        }
-      }
-      if (!threadId) return;
-
-      if (wasUnsetTitle) {
-        const latestTitle =
-          useThreadStore
-            .getState()
-            .agents.find((a) => a.id === agent.id)
-            ?.title.trim() ?? "";
-        if (latestTitle.length > 0 && latestTitle !== NEW_THREAD_TITLE) {
-          rpcRequest("thread/name/set", { threadId, name: latestTitle }).catch((e) => {
-            console.error("thread/name/set failed", e);
-          });
-        }
-
-        if (displayContent.trim().length > 0) {
-          generateThreadTitle(displayContent)
-            .then((generatedTitle) => {
-              if (!generatedTitle) return;
-              const currentTitle =
-                useThreadStore.getState().agents.find((a) => a.id === agent.id)?.title ?? "";
-              if (
-                currentTitle !== NEW_THREAD_TITLE &&
-                provisionalTitle &&
-                currentTitle !== provisionalTitle
-              ) {
-                return;
-              }
-              updateAgentTitle(agent.id, generatedTitle);
-              return rpcRequest("thread/name/set", { threadId, name: generatedTitle });
-            })
-            .catch((e) => {
-              console.error("thread title generation failed", e);
-            });
-        }
-      }
-
-      const inputItems: Array<Record<string, unknown>> = [];
-      for (const att of attachments) {
-        if (att.mime?.startsWith("image/") && att.dataUrl) {
-          inputItems.push({ type: "image", url: att.dataUrl });
-        } else if (att.mime?.startsWith("image/") && isAbsoluteFilePath(att.path)) {
-          inputItems.push({ type: "localImage", path: att.path });
-        } else if (isAbsoluteFilePath(att.path)) {
-          inputItems.push({
-            type: "mention",
-            name: att.name,
-            path: att.path,
-          });
-        } else {
-          inputItems.push({
-            type: "text",
-            text: `[File: ${att.name}]`,
-            textElements: [],
-          });
-        }
-      }
-      if (trimmed) {
-        inputItems.push({ type: "text", text: trimmed, textElements: [] });
-      }
-
-      try {
-        await rpcRequest("turn/start", {
-          threadId,
-          input: inputItems,
-          effort: getSelectedReasoningEffort(),
-        });
-      } catch (e) {
-        console.error("turn/start failed", e);
-      }
+      await sendChatTurn(agent.id, message, attachments);
     },
-    [
-      agent.id,
-      agent.codexThreadId,
-      agent.title,
-      projectPath,
-      appendAgentMessage,
-      setAgentStatus,
-      setAgentCodexThreadId,
-      addAgentModel,
-      updateAgentTitle,
-      agent.status,
-    ],
+    [agent.id],
   );
 
   const [stopping, setStopping] = useState(false);
@@ -1398,7 +1237,11 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const isReview = agent.status === "review";
   const isBlocked = agent.blocked;
   const hasPendingApproval = !!agent.pendingApproval;
-  const showBar = isRunning || isReview || isBlocked || hasPendingApproval;
+  const showBar =
+    isRunning ||
+    isBlocked ||
+    hasPendingApproval ||
+    (isReview && agent.files.length > 0);
 
   const projectName = projectPath?.split("/").pop() ?? "";
 
@@ -1645,7 +1488,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       {/* Messages */}
       <div className="relative flex-1 min-h-0">
         <div ref={scrollRef} className="h-full overflow-y-auto">
-          <div className="max-w-[680px] mx-auto px-6 pt-6 pb-28">
+          <div className="max-w-[680px] mx-auto px-6 pt-16 pb-28">
           {agent.messages.length === 0 && !agent.streamingBuffer ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="w-8 h-8 rounded-full border border-border-light flex items-center justify-center">
@@ -1726,7 +1569,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             )}
 
             {/* Accept all pill */}
-            {isReview && (
+            {isReview && agent.files.length > 0 && (
               <button className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-accent-green/40 hover:bg-accent-green/10 hover:border-accent-green/70 transition-colors duration-150 cursor-pointer">
                 <svg width="9" height="9" viewBox="0 0 9 9" fill="none" className="shrink-0">
                   <path d="M1.5 4.5L3.75 6.75L7.5 2.25" stroke="var(--accent-green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -1738,7 +1581,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             )}
 
             {/* Reject all pill */}
-            {isReview && (
+            {isReview && agent.files.length > 0 && (
               <button className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-accent-red/40 hover:bg-accent-red/10 hover:border-accent-red/70 transition-colors duration-150 cursor-pointer">
                 <svg width="9" height="9" viewBox="0 0 9 9" fill="none" className="shrink-0">
                   <path d="M2 2L7 7M7 2L2 7" stroke="var(--accent-red)" strokeWidth="1.5" strokeLinecap="round"/>
@@ -1854,6 +1697,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         {/* Compose */}
         {canCompose ? (
           <ComposeArea
+            agentId={agent.id}
+            persistQueuedDraft={agent.status === "queued"}
             onSend={handleSend}
             emptyThread={
               agent.messages.length === 0 && !agent.streamingBuffer
@@ -1862,9 +1707,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         ) : (
           <div className="border border-border-light rounded-lg px-4 py-3 text-center">
             <span className="font-mono text-[10.5px] text-text-faint">
-              {agent.status === "queued"
-                ? "agent is queued — start it to begin a conversation"
-                : "deployed — read only"}
+              deployed — read only
             </span>
           </div>
         )}

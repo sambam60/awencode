@@ -43,7 +43,7 @@ function hydrateAgentFromDisk(a: Agent): Agent {
 function buildSnapshot(projectPath: string): ProjectWorkspaceData {
   const { agents, selectedAgentId } = useThreadStore.getState();
   const { collapsedCols } = useBoardUiStore.getState();
-  const { fileTreeOpenByAgentId } = useChatUiStore.getState();
+  const { fileTreeOpenByAgentId, composeDraftByAgentId } = useChatUiStore.getState();
   const view = useViewStore.getState().view;
   const prevLast =
     useProjectWorkspaceStore.getState().projects[projectPath]?.lastView ??
@@ -66,6 +66,7 @@ function buildSnapshot(projectPath: string): ProjectWorkspaceData {
     selectedAgentId,
     boardCollapsedCols: { ...collapsedCols },
     chatFileTreeOpenByAgentId: { ...fileTreeOpenByAgentId },
+    chatComposeDraftByAgentId: { ...composeDraftByAgentId },
     lastView,
   };
 }
@@ -88,6 +89,7 @@ function hydrateProject(projectPath: string) {
   useThreadStore.getState().selectAgent(selectedAgentId);
   useBoardUiStore.getState().setCollapsedCols(ws.boardCollapsedCols);
   useChatUiStore.getState().setAllFileTreePrefs(ws.chatFileTreeOpenByAgentId);
+  useChatUiStore.getState().setAllComposeDrafts(ws.chatComposeDraftByAgentId ?? {});
 
   const setView = useViewStore.getState().setView;
   if (ws.lastView === "chat" && selectedAgentId) {

@@ -10,6 +10,8 @@ export interface ProjectWorkspaceData {
   selectedAgentId: string | null;
   boardCollapsedCols: Partial<Record<BoardColumn, boolean>>;
   chatFileTreeOpenByAgentId: Record<string, boolean>;
+  /** Persisted prompt text for threads still in Queue (unsent draft). */
+  chatComposeDraftByAgentId: Record<string, string>;
   lastView: WorkspaceSubView;
 }
 
@@ -19,6 +21,7 @@ function emptyProjectWorkspace(): ProjectWorkspaceData {
     selectedAgentId: null,
     boardCollapsedCols: {},
     chatFileTreeOpenByAgentId: {},
+    chatComposeDraftByAgentId: {},
     lastView: "orchestrator",
   };
 }
@@ -42,8 +45,12 @@ export const useProjectWorkspaceStore = create<ProjectWorkspaceStore>()(
 );
 
 export function getProjectWorkspace(projectPath: string): ProjectWorkspaceData {
-  return (
-    useProjectWorkspaceStore.getState().projects[projectPath] ??
-    emptyProjectWorkspace()
-  );
+  const ws = useProjectWorkspaceStore.getState().projects[projectPath];
+  if (!ws) return emptyProjectWorkspace();
+  return {
+    ...emptyProjectWorkspace(),
+    ...ws,
+    chatFileTreeOpenByAgentId: ws.chatFileTreeOpenByAgentId ?? {},
+    chatComposeDraftByAgentId: ws.chatComposeDraftByAgentId ?? {},
+  };
 }
