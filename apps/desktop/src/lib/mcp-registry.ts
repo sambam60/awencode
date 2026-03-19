@@ -22,10 +22,54 @@ export type RegistryServer = {
   packages?: RegistryPackage[];
 };
 
-export type RegistryListResponse = {
-  servers?: Array<{ server?: RegistryServer }>;
-  metadata?: { next_cursor?: string | null };
+type RegistryOfficialMeta = {
+  updatedAt?: string;
+  publishedAt?: string;
 };
+
+export type RegistryListItem = {
+  server?: RegistryServer;
+  _meta?: {
+    "io.modelcontextprotocol.registry/official"?: RegistryOfficialMeta;
+  };
+};
+
+export type RegistryListResponse = {
+  servers?: RegistryListItem[];
+  metadata?: { next_cursor?: string | null; nextCursor?: string | null; count?: number };
+};
+
+function registryItemRecencyMs(item: RegistryListItem): number {
+  const o = item._meta?.["io.modelcontextprotocol.registry/official"];
+  const iso = o?.updatedAt ?? o?.publishedAt;
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Default registry ordering is alphabetical. With no search query, re-order by
+ * official registry timestamps (updated → published) so the preview shows
+ * active / recently touched servers first — closest signal the public API exposes
+ * to “popular” without a dedicated ranking field.
+ */
+function sortRegistryItemsByRecency(items: RegistryListItem[]): RegistryListItem[] {
+  return [...items].sort((a, b) => registryItemRecencyMs(b) - registryItemRecencyMs(a));
+}
+
+/** The registry can return multiple rows per `server.name` (e.g. version rows). */
+function dedupeRegistryItemsByName(items: RegistryListItem[]): RegistryListItem[] {
+  const seen = new Set<string>();
+  const out: RegistryListItem[] = [];
+  for (const item of items) {
+    const name = item.server?.name?.trim();
+    if (!name) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(item);
+  }
+  return out;
+}
 
 export async function searchMcpRegistry(
   query: string,
@@ -44,11 +88,23 @@ export async function searchMcpRegistry(
   if (!res.ok) {
     throw new Error(`Registry request failed (${res.status})`);
   }
-  return (await res.json()) as RegistryListResponse;
+  const data = (await res.json()) as RegistryListResponse;
+  const raw = data.servers ?? [];
+  const ordered = q ? raw : sortRegistryItemsByRecency(raw);
+  const servers = dedupeRegistryItemsByName(ordered);
+  return { ...data, servers };
 }
 
-/** Safe TOML key segment for mcp_servers.<name> */
-export function slugifyMcpServerName(registryName: string): string {
-  const base = registryName.trim().replace(/[^a-zA-Z0-9._-]+/g, "_");
-  return base.length > 0 ? base : "registry_server";
+/**
+ * Single segment under `[mcp_servers]`. Codex `config/batchWrite` splits `keyPath` on `.`,
+ * so dots/slashes in the name must not appear — e.g. `ai.linear/mcp` would become
+ * `mcp_servers.ai` + `linear/mcp` and fail validation.
+ */
+export function mcpServerTomlKey(raw: string): string {
+  const s = raw
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+  return s.length > 0 ? s : "registry_server";
 }

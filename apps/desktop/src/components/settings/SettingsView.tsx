@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, type ComponentType } from "react";
+import { createPortal } from "react-dom";
 import {
   Archive,
   BarChart2,
@@ -23,11 +24,8 @@ import { useViewStore } from "@/lib/stores/view-store";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  searchMcpRegistry,
-  slugifyMcpServerName,
-  type RegistryServer,
-} from "@/lib/mcp-registry";
+import { searchMcpRegistry, mcpServerTomlKey, type RegistryServer } from "@/lib/mcp-registry";
+import { useResolvedThemeIsDark } from "@/lib/use-resolved-theme-dark";
 
 type NavIcon = ComponentType<LucideProps>;
 
@@ -179,15 +177,25 @@ function SettingsRow({
   description,
   icon,
   children,
+  layout = "default",
 }: {
   label: string;
   description?: string;
   icon?: React.ReactNode;
   children: React.ReactNode;
+  /** `stacked`: label/description on top, control full width below (e.g. textarea). */
+  layout?: "default" | "stacked";
 }) {
+  const stacked = layout === "stacked";
   return (
-    <div className="px-4 py-4 border-b border-border-light last:border-b-0 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
-      <div className="flex-1 min-w-0 flex gap-3">
+    <div
+      className={cn(
+        "px-4 py-4 border-b border-border-light last:border-b-0 flex flex-col gap-3",
+        !stacked && "sm:flex-row sm:items-start sm:justify-between sm:gap-8",
+        stacked && "gap-4",
+      )}
+    >
+      <div className={cn("flex gap-3", !stacked && "flex-1 min-w-0", stacked && "w-full")}>
         {icon ? <div className="shrink-0 pt-0.5 text-text-tertiary">{icon}</div> : null}
         <div className="min-w-0">
           <div className="text-[13px] font-medium text-text-primary">{label}</div>
@@ -198,7 +206,14 @@ function SettingsRow({
           )}
         </div>
       </div>
-      <div className="w-full sm:w-auto sm:shrink-0 sm:max-w-[min(100%,380px)]">{children}</div>
+      <div
+        className={cn(
+          "w-full",
+          !stacked && "sm:w-auto sm:shrink-0 sm:max-w-[min(100%,380px)]",
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -216,37 +231,93 @@ function SettingsChoiceField<T extends string>({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuBox, setMenuBox] = useState<{
+    left: number;
+    width: number;
+    maxHeight: number;
+    top?: number;
+    bottom?: number;
+  } | null>(null);
+  const themeDark = useResolvedThemeIsDark();
   const selected = options.find((o) => o.value === value) ?? options[0];
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuBox(null);
+      return;
+    }
+    const update = () => {
+      const el = wrapRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const viewportPadding = 8;
+      const gap = 4;
+      const preferredMax = 280;
+      const preferredMin = 72;
+      const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+      const spaceAbove = rect.top - gap - viewportPadding;
+      const openBelow = spaceBelow >= preferredMin || spaceBelow >= spaceAbove;
+      const available = Math.max(0, openBelow ? spaceBelow : spaceAbove);
+      const maxHeight = Math.min(preferredMax, available);
+      const left = Math.max(
+        viewportPadding,
+        Math.min(rect.left, window.innerWidth - rect.width - viewportPadding),
+      );
+      if (openBelow) {
+        setMenuBox({
+          left,
+          width: rect.width,
+          maxHeight,
+          top: rect.bottom + gap,
+        });
+      } else {
+        setMenuBox({
+          left,
+          width: rect.width,
+          maxHeight,
+          bottom: window.innerHeight - rect.top + gap,
+        });
+      }
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  return (
-    <div className="relative w-full" ref={wrapRef}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "w-full text-left px-3 py-2.5 rounded-md border border-border-light bg-bg-secondary/60 hover:bg-bg-secondary transition-colors duration-120 flex items-start justify-between gap-3 cursor-pointer disabled:opacity-50",
-        )}
-      >
-        <div className="min-w-0">
-          <div className="text-[12.5px] font-medium text-text-primary">{selected.label}</div>
-          <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
-            {selected.description}
-          </div>
-        </div>
-        <ChevronDown className="h-4 w-4 shrink-0 text-text-faint mt-0.5" />
-      </button>
-      {open && (
-        <div className="absolute right-0 left-0 top-full mt-1 z-30 rounded-lg border border-border-light glass-overlay shadow-level-2 py-1 max-h-64 overflow-y-auto">
+  const menu =
+    open &&
+    menuBox &&
+    createPortal(
+      <div className={cn(themeDark && "dark")}>
+        <div
+          ref={menuRef}
+          className="fixed z-[100] rounded-lg border border-border-light glass-overlay shadow-level-2 py-1 overflow-y-auto overscroll-contain"
+          style={{
+            left: menuBox.left,
+            width: menuBox.width,
+            maxHeight: menuBox.maxHeight,
+            ...(menuBox.top !== undefined
+              ? { top: menuBox.top }
+              : { bottom: menuBox.bottom }),
+          }}
+        >
           {options.map((o) => (
             <button
               key={o.value}
@@ -274,8 +345,32 @@ function SettingsChoiceField<T extends string>({
             </button>
           ))}
         </div>
-      )}
-    </div>
+      </div>,
+      document.body,
+    );
+
+  return (
+    <>
+      <div className="relative w-full" ref={wrapRef}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((o) => !o)}
+          className={cn(
+            "w-full text-left px-3 py-2.5 rounded-md border border-border-light bg-bg-secondary/60 hover:bg-bg-secondary transition-colors duration-120 flex items-start justify-between gap-3 cursor-pointer disabled:opacity-50",
+          )}
+        >
+          <div className="min-w-0">
+            <div className="text-[12.5px] font-medium text-text-primary">{selected.label}</div>
+            <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
+              {selected.description}
+            </div>
+          </div>
+          <ChevronDown className="h-4 w-4 shrink-0 text-text-faint mt-0.5" />
+        </button>
+      </div>
+      {menu}
+    </>
   );
 }
 
@@ -911,7 +1006,7 @@ function AgentSection() {
         description="How Codex asks for approval, what it can change on disk, and your custom instructions."
       />
 
-      <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden mb-6">
+      <div className="bg-bg-card border border-border-light rounded-lg mb-6">
         {loading ? (
           <div className="px-4 py-4 text-[12px] text-text-faint">Loading…</div>
         ) : (
@@ -945,6 +1040,7 @@ function AgentSection() {
               />
             </SettingsRow>
             <SettingsRow
+              layout="stacked"
               label="Instructions"
               description="Extra guidance applied to the agent (personalization)"
               icon={<Bot className="h-4 w-4" strokeWidth={1.5} />}
@@ -1028,7 +1124,7 @@ type McpServerDraft =
     };
 
 function normalizeServerName(raw: string): string {
-  return raw.trim();
+  return mcpServerTomlKey(raw);
 }
 
 function parseCsvList(raw: string): string[] {
@@ -1306,6 +1402,7 @@ function McpServerModal({
   const [status, setStatus] = useState<
     "idle" | "saving" | "saved" | "error" | "removing" | "removed"
   >("idle");
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const isCreate = draft.mode === "create";
   const name = normalizeServerName(draft.name);
@@ -1321,6 +1418,7 @@ function McpServerModal({
   const save = async () => {
     if (!canSave) return;
     setStatus("saving");
+    setLastError(null);
     try {
       const keyPath = `mcp_servers.${name}`;
       const value =
@@ -1352,15 +1450,19 @@ function McpServerModal({
       window.setTimeout(() => setStatus("idle"), 900);
       onSaved();
       onClose();
-    } catch {
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+      setLastError(msg);
       setStatus("error");
-      window.setTimeout(() => setStatus("idle"), 1800);
+      window.setTimeout(() => setStatus("idle"), 4500);
     }
   };
 
   const remove = async () => {
     if (isCreate || !name) return;
     setStatus("removing");
+    setLastError(null);
     try {
       await rpcRequest("config/batchWrite", {
         edits: [{ keyPath: `mcp_servers.${name}`, value: null, mergeStrategy: "replace" }],
@@ -1371,9 +1473,12 @@ function McpServerModal({
       window.setTimeout(() => setStatus("idle"), 900);
       onSaved();
       onClose();
-    } catch {
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+      setLastError(msg);
       setStatus("error");
-      window.setTimeout(() => setStatus("idle"), 1800);
+      window.setTimeout(() => setStatus("idle"), 4500);
     }
   };
 
@@ -1413,7 +1518,7 @@ function McpServerModal({
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 disabled={!isCreate}
-                placeholder="MCP server name"
+                placeholder="e.g. linear_mcp (no dots — used as config key)"
                 className={cn(
                   "w-[360px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120",
                   !isCreate && "opacity-70 cursor-default",
@@ -1523,7 +1628,7 @@ function McpServerModal({
         </div>
 
         <div className="flex items-center justify-between gap-4">
-          <div className="text-[11.5px] text-text-tertiary leading-relaxed">
+          <div className="text-[11.5px] text-text-tertiary leading-relaxed min-w-0">
             {status === "saving"
               ? "Saving…"
               : status === "saved"
@@ -1533,7 +1638,9 @@ function McpServerModal({
                   : status === "removed"
                     ? "Removed."
                     : status === "error"
-                      ? "Couldn’t apply. Try again."
+                      ? lastError
+                        ? `Couldn’t apply: ${lastError}`
+                        : "Couldn’t apply. Try again."
                       : isCreate
                         ? "Writes to your user config.toml."
                         : "Edits apply after reload."}
@@ -1573,7 +1680,7 @@ function McpServerModal({
 }
 
 function draftFromRegistryServer(server: RegistryServer): McpServerDraft {
-  const name = slugifyMcpServerName(server.name);
+  const name = mcpServerTomlKey(server.name);
   const httpRemote = server.remotes?.find(
     (r) => r.type === "streamable-http" && typeof r.url === "string" && r.url.length > 0,
   );
@@ -1616,11 +1723,15 @@ function McpSection() {
         setRegistryLoading(true);
         setRegistryErr(null);
         try {
-          const data = await searchMcpRegistry(registryQuery, { limit: 18 });
+          const q = registryQuery.trim();
+          // Empty query: fetch a wide page so client-side recency sort isn’t trapped in an A–Z slice.
+          const fetchLimit = q ? 18 : 100;
+          const data = await searchMcpRegistry(registryQuery, { limit: fetchLimit });
           if (cancelled) return;
           const list = (data.servers ?? [])
             .map((x) => x.server)
-            .filter((s): s is RegistryServer => Boolean(s?.name));
+            .filter((s): s is RegistryServer => Boolean(s?.name))
+            .slice(0, 18);
           setRegistryResults(list);
         } catch (e) {
           if (!cancelled) {
@@ -1776,6 +1887,11 @@ function McpSection() {
             className="w-full pl-9 pr-3 py-2.5 rounded-md border border-border-light bg-bg-input text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
           />
         </div>
+        {!registryQuery.trim() && (
+          <p className="text-[11px] text-text-tertiary mb-2 leading-relaxed">
+            Preview list is ordered by recent registry activity (the API does not expose install counts).
+          </p>
+        )}
         {registryErr && (
           <div className="text-[11.5px] text-accent-red mb-2">{registryErr}</div>
         )}
