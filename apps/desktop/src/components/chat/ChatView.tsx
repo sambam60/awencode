@@ -41,6 +41,7 @@ import { rpcRequest, rpcRespond } from "@/lib/rpc-client";
 import { generateThreadTitle, interruptTurn } from "@/lib/codex-turn";
 import { isAbsoluteFilePath } from "@/lib/dnd";
 import { useAppStore } from "@/lib/stores/app-store";
+import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import {
@@ -238,6 +239,33 @@ const StreamBlock = memo(({ children }: { children: React.ReactNode }) => (
     {children}
   </div>
 ));
+
+function ChatEdgeBlurOverlays() {
+  return (
+    <>
+      {/* Top edge blur (under nav header). No bottom blur: it stopped at the scroll/composer
+          boundary and read as a flat bg-primary “fill” above the compose card. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-24" aria-hidden="true">
+        <div
+          className="absolute inset-0 backdrop-blur-[1px]"
+          style={{ maskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%)" }}
+        />
+        <div
+          className="absolute inset-0 backdrop-blur-[2px]"
+          style={{ maskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%)" }}
+        />
+        <div
+          className="absolute inset-0 backdrop-blur-[4px]"
+          style={{ maskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 50%)" }}
+        />
+        <div
+          className="absolute inset-0 backdrop-blur-[8px]"
+          style={{ maskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 35%)" }}
+        />
+      </div>
+    </>
+  );
+}
 
 type ParsedNode = { key: string; node: React.ReactNode };
 
@@ -1393,38 +1421,24 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   );
 
   const [stopping, setStopping] = useState(false);
-  const [fileTreeOpen, setFileTreeOpen] = useState(false); // visible
-  const [fileTreeMounted, setFileTreeMounted] = useState(false); // keep mounted during close animation
-  const fileTreeCloseTimerRef = useRef<number | null>(null);
+  const fileTreeOpen = useChatUiStore(
+    (s) => s.fileTreeOpenByAgentId[agent.id] ?? false,
+  );
+  const setAgentFileTreeOpen = useChatUiStore((s) => s.setAgentFileTreeOpen);
+  const [fileTreeMounted, setFileTreeMounted] = useState(() => fileTreeOpen);
 
   useEffect(() => {
-    return () => {
-      if (fileTreeCloseTimerRef.current) {
-        window.clearTimeout(fileTreeCloseTimerRef.current);
-        fileTreeCloseTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  const toggleFileTree = useCallback(() => {
-    if (!fileTreeOpen) {
-      // Opening: mount immediately, then animate in.
-      if (fileTreeCloseTimerRef.current) {
-        window.clearTimeout(fileTreeCloseTimerRef.current);
-        fileTreeCloseTimerRef.current = null;
-      }
+    if (fileTreeOpen) {
       setFileTreeMounted(true);
-      setFileTreeOpen(true);
       return;
     }
-
-    // Closing: animate out by toggling visibility; keep mounted until animation ends.
-    setFileTreeOpen(false);
-    fileTreeCloseTimerRef.current = window.setTimeout(() => {
-      setFileTreeMounted(false);
-      fileTreeCloseTimerRef.current = null;
-    }, 200);
+    const t = window.setTimeout(() => setFileTreeMounted(false), 200);
+    return () => window.clearTimeout(t);
   }, [fileTreeOpen]);
+
+  const toggleFileTree = useCallback(() => {
+    setAgentFileTreeOpen(agent.id, !fileTreeOpen);
+  }, [agent.id, fileTreeOpen, setAgentFileTreeOpen]);
 
   const handleStop = useCallback(async () => {
     const tid = agent.codexThreadId;
@@ -1650,8 +1664,9 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-[680px] mx-auto px-6 py-6">
+      <div className="relative flex-1 min-h-0">
+        <div ref={scrollRef} className="h-full overflow-y-auto">
+          <div className="max-w-[680px] mx-auto px-6 pt-6 pb-28">
           {agent.messages.length === 0 && !agent.streamingBuffer ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="w-8 h-8 rounded-full border border-border-light flex items-center justify-center">
@@ -1712,18 +1727,20 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               )}
             </>
           )}
+          </div>
         </div>
+        <ChatEdgeBlurOverlays />
       </div>
 
-      {/* Compose + action bar stacked — bar peeks out behind compose like a folder tab */}
-      <div className="max-w-[680px] mx-auto w-full px-6 pb-4 shrink-0 relative">
+      {/* Compose + action bar — pulled up so chat canvas (bg-primary) doesn’t show as a band above the card */}
+      <div className="max-w-[680px] mx-auto w-full px-6 pb-4 shrink-0 relative z-30 -mt-20 bg-transparent">
 
         {/* Action bar — rendered first so it sits behind compose in z-order */}
         {showBar && (agent.files.length > 0 || hasPendingApproval) && (
           <div className="absolute bottom-0 left-6 right-6 pb-4 flex justify-center pointer-events-none">
             {/* Narrower than compose: 24px inset each side */}
             <div className="w-full mx-6 pointer-events-auto">
-              <div className="flex items-center h-9 rounded-b-lg border border-t-0 border-border-default bg-bg-secondary overflow-hidden">
+              <div className="flex items-center h-9 rounded-b-lg border border-t-0 border-border-default bg-transparent overflow-hidden">
 
                 {/* Left — file count */}
                 <button className="flex items-center gap-1.5 pl-3 pr-2 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer shrink-0">

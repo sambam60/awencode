@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DetailPanel } from "./DetailPanel";
 import { AgentCard } from "./AgentCard";
@@ -6,12 +6,10 @@ import { CommandBar } from "../command/CommandBar";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
+import { BOARD_COLUMN_IDS, useBoardUiStore } from "@/lib/stores/board-ui-store";
 import { STATUS_CONFIG } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
-
-const ALL_COLUMNS = ["queued", "active", "review", "deployed"] as const;
-type BoardColumn = (typeof ALL_COLUMNS)[number];
 
 export function Orchestrator() {
   const agents = useThreadStore((s) => s.agents);
@@ -19,17 +17,12 @@ export function Orchestrator() {
   const selectAgent = useThreadStore((s) => s.selectAgent);
   const addAgent = useThreadStore((s) => s.addAgent);
   const setCommandBarOpen = useAppStore((s) => s.setCommandBarOpen);
+  const setProjectPath = useAppStore((s) => s.setProjectPath);
   const projectName = useAppStore((s) => s.projectName);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-
-  const [collapsedCols, setCollapsedCols] = useState<Partial<Record<BoardColumn, boolean>>>(
-    {},
-  );
-
-  const toggleCol = (c: BoardColumn) => {
-    setCollapsedCols((prev) => ({ ...prev, [c]: !prev[c] }));
-  };
+  const collapsedCols = useBoardUiStore((s) => s.collapsedCols);
+  const toggleCol = useBoardUiStore((s) => s.toggleColumn);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -94,7 +87,10 @@ export function Orchestrator() {
         <div className="flex items-center gap-1">
           {/* Home */}
           <button
-            onClick={() => setView("home")}
+            onClick={() => {
+              setProjectPath(null);
+              setView("home");
+            }}
             className="p-1.5 rounded cursor-pointer text-text-primary dark:text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Home"
           >
@@ -143,10 +139,10 @@ export function Orchestrator() {
               selected && "pr-[360px]",
             )}
           >
-            {ALL_COLUMNS.map((col, i) => {
+            {BOARD_COLUMN_IDS.map((col, i) => {
               const colAgents = agents.filter((a) => a.status === col);
               const config = STATUS_CONFIG[col];
-              const isLast = i === ALL_COLUMNS.length - 1;
+              const isLast = i === BOARD_COLUMN_IDS.length - 1;
               const collapsed = Boolean(collapsedCols[col]);
               return (
                 <div

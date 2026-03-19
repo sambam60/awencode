@@ -85,6 +85,14 @@ export async function generateThreadTitle(seedMessage: string): Promise<string |
       return;
     }
 
+    if (msg.method === "item/completed") {
+      const item = params.item as Record<string, unknown> | undefined;
+      if (item?.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
+        generated = item.text;
+      }
+      return;
+    }
+
     if (msg.method === "turn/completed") {
       finish?.(generated);
     }

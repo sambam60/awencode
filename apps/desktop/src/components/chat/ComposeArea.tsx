@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { Plus, ChevronDown, Mic, ArrowUp, X, Image } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/lib/stores/app-store";
+import { useResolvedThemeIsDark } from "@/lib/use-resolved-theme-dark";
 import {
   AWENCODE_FILE_PATH_MIME,
   AWENCODE_FILE_KIND_MIME,
@@ -93,10 +93,19 @@ function GlassMenuPortal({
     return null;
   }
 
-  const maxH = Math.min(256, Math.max(80, rect.top - 12));
-  const left = Math.min(rect.left, window.innerWidth - widthPx - 8);
-
-  const bottom = window.innerHeight - rect.top + 4;
+  const viewportPadding = 8;
+  const anchorGap = 4;
+  const preferredMaxHeight = 256;
+  const preferredMinHeight = 80;
+  const spaceAbove = rect.top - anchorGap - viewportPadding;
+  const spaceBelow = window.innerHeight - rect.bottom - anchorGap - viewportPadding;
+  const openBelow = spaceAbove < preferredMinHeight && spaceBelow > spaceAbove;
+  const availableHeight = Math.max(0, openBelow ? spaceBelow : spaceAbove);
+  const maxH = Math.min(preferredMaxHeight, availableHeight);
+  const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - widthPx - viewportPadding));
+  const positionStyle = openBelow
+    ? { left, top: rect.bottom + anchorGap }
+    : { left, bottom: window.innerHeight - rect.top + anchorGap };
 
   return createPortal(
     <div className={cn(themeDark && "dark")}>
@@ -106,7 +115,7 @@ function GlassMenuPortal({
           "fixed z-[100] rounded-lg glass-overlay",
           widthClass,
         )}
-        style={{ left, bottom }}
+        style={positionStyle}
       >
         <div
           className="overflow-y-auto overscroll-contain rounded-lg"
@@ -131,7 +140,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const composeRootRef = useRef<HTMLDivElement>(null);
   const modelAnchorRef = useRef<HTMLButtonElement>(null);
   const reasoningAnchorRef = useRef<HTMLButtonElement>(null);
-  const themeDark = useAppStore((s) => s.theme === "dark");
+  const themeDark = useResolvedThemeIsDark();
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);

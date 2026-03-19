@@ -1,22 +1,51 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
+import {
+  Archive,
+  BarChart2,
+  Box,
+  Bot,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  GitBranch,
+  Layers,
+  Laptop,
+  Moon,
+  Palette,
+  Search,
+  SlidersHorizontal,
+  Sun,
+  type LucideProps,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/lib/stores/app-store";
+import { useAppStore, type ThemePreference } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  searchMcpRegistry,
+  slugifyMcpServerName,
+  type RegistryServer,
+} from "@/lib/mcp-registry";
 
-const NAV_ITEMS = [
-  { id: "general", label: "General" },
-  { id: "appearance", label: "Appearance" },
-  { id: "configuration", label: "Configuration" },
-  { id: "personalization", label: "Personalization" },
-  { id: "usage", label: "Usage" },
-  { id: "mcp", label: "MCP Servers" },
-  { id: "git", label: "Git" },
-  { id: "environments", label: "Environments" },
-  { id: "worktrees", label: "Worktrees" },
-  { id: "archived", label: "Archived threads" },
+type NavIcon = ComponentType<LucideProps>;
+
+const NAV_ITEMS: Array<{
+  id: string;
+  label: string;
+  icon?: NavIcon;
+  iconSrc?: string;
+}> = [
+  { id: "general", label: "General", icon: SlidersHorizontal },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "agent", label: "Agent", icon: Bot },
+  { id: "usage", label: "Usage", icon: BarChart2 },
+  { id: "mcp", label: "MCP Servers", iconSrc: "/mcp_logo.svg" },
+  { id: "git", label: "Git", icon: GitBranch },
+  { id: "environments", label: "Environments", icon: Layers },
+  { id: "worktrees", label: "Worktrees", icon: Box },
+  { id: "archived", label: "Archived threads", icon: Archive },
 ];
 
 interface SettingsViewProps {
@@ -26,9 +55,10 @@ interface SettingsViewProps {
 export function SettingsView({ onBack }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState("general");
   const theme = useAppStore((s) => s.theme);
-  const toggleTheme = useAppStore((s) => s.toggleTheme);
+  const setTheme = useAppStore((s) => s.setTheme);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+  const setProjectPath = useAppStore((s) => s.setProjectPath);
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
@@ -39,7 +69,10 @@ export function SettingsView({ onBack }: SettingsViewProps) {
       >
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setView("home")}
+            onClick={() => {
+              setProjectPath(null);
+              setView("home");
+            }}
             className="p-1.5 rounded cursor-pointer text-text-primary hover:opacity-80 hover:bg-bg-secondary transition-all duration-120"
             title="Home"
           >
@@ -76,34 +109,47 @@ export function SettingsView({ onBack }: SettingsViewProps) {
           </div>
 
           <nav className="flex-1 px-2 pb-4 overflow-y-auto">
-            {NAV_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveSection(item.id)}
-                className={cn(
-                  "w-full text-left px-3 py-2 rounded-md text-[13px] transition-colors duration-120 cursor-pointer",
-                  activeSection === item.id
-                    ? "bg-bg-card text-text-primary font-medium border border-border-light"
-                    : "text-text-secondary hover:text-text-primary hover:bg-bg-card/60",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveSection(item.id)}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-md text-[13px] transition-colors duration-120 cursor-pointer",
+                    activeSection === item.id
+                      ? "bg-bg-card text-text-primary font-medium border border-border-light"
+                      : "text-text-secondary hover:text-text-primary hover:bg-bg-card/60",
+                  )}
+                >
+                  {item.iconSrc ? (
+                    <img
+                      src={item.iconSrc}
+                      alt=""
+                      className="h-3.5 w-3.5 shrink-0 opacity-80"
+                    />
+                  ) : Icon ? (
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
+                  ) : null}
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
           </nav>
         </div>
 
         {/* Main content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-10 py-8 max-w-2xl">
+        <div className="flex-1 overflow-y-auto flex justify-center">
+          <div className="w-full max-w-3xl xl:max-w-[52rem] px-10 py-8">
             {activeSection === "general" && (
               <GeneralSection />
             )}
             {activeSection === "appearance" && (
-              <AppearanceSection theme={theme} toggleTheme={toggleTheme} />
+              <AppearanceSection theme={theme} setTheme={setTheme} />
             )}
+            {activeSection === "agent" && <AgentSection />}
             {activeSection === "mcp" && <McpSection />}
-            {!["general", "appearance", "mcp"].includes(activeSection) && (
+            {!["general", "appearance", "agent", "mcp"].includes(activeSection) && (
               <PlaceholderSection
                 label={NAV_ITEMS.find((n) => n.id === activeSection)?.label ?? ""}
               />
@@ -131,23 +177,104 @@ function SectionHeading({ title, description }: { title: string; description?: s
 function SettingsRow({
   label,
   description,
+  icon,
   children,
 }: {
   label: string;
   description?: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="px-4 py-4 border-b border-border-light last:border-b-0 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary">{label}</div>
-        {description && (
-          <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
-            {description}
-          </div>
-        )}
+      <div className="flex-1 min-w-0 flex gap-3">
+        {icon ? <div className="shrink-0 pt-0.5 text-text-tertiary">{icon}</div> : null}
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium text-text-primary">{label}</div>
+          {description && (
+            <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
+              {description}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="w-full sm:w-auto sm:shrink-0">{children}</div>
+      <div className="w-full sm:w-auto sm:shrink-0 sm:max-w-[min(100%,380px)]">{children}</div>
+    </div>
+  );
+}
+
+function SettingsChoiceField<T extends string>({
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  value: T;
+  options: { value: T; label: string; description: string }[];
+  onChange: (v: T) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((o) => o.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div className="relative w-full" ref={wrapRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "w-full text-left px-3 py-2.5 rounded-md border border-border-light bg-bg-secondary/60 hover:bg-bg-secondary transition-colors duration-120 flex items-start justify-between gap-3 cursor-pointer disabled:opacity-50",
+        )}
+      >
+        <div className="min-w-0">
+          <div className="text-[12.5px] font-medium text-text-primary">{selected.label}</div>
+          <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
+            {selected.description}
+          </div>
+        </div>
+        <ChevronDown className="h-4 w-4 shrink-0 text-text-faint mt-0.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 left-0 top-full mt-1 z-30 rounded-lg border border-border-light glass-overlay shadow-level-2 py-1 max-h-64 overflow-y-auto">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => {
+                onChange(o.value);
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 transition-colors duration-120 cursor-pointer glass-menu-row",
+                o.value === value && "glass-menu-row-active",
+              )}
+            >
+              <div className="min-w-0">
+                <div className="text-[12.5px] font-medium text-text-primary">{o.label}</div>
+                <div className="text-[11px] text-text-tertiary mt-0.5 leading-snug">
+                  {o.description}
+                </div>
+              </div>
+              {o.value === value ? (
+                <Check className="h-3.5 w-3.5 shrink-0 text-text-primary mt-0.5" />
+              ) : (
+                <span className="w-3.5 shrink-0" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -554,35 +681,304 @@ function GeneralSection({
   );
 }
 
+function ThemeSegmented({
+  value,
+  onChange,
+}: {
+  value: ThemePreference;
+  onChange: (v: ThemePreference) => void;
+}) {
+  const seg = (
+    pref: ThemePreference,
+    label: string,
+    Icon: NavIcon,
+  ) => {
+    const active = value === pref;
+    return (
+      <button
+        type="button"
+        key={pref}
+        onClick={() => onChange(pref)}
+        className={cn(
+          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11.5px] font-medium transition-colors duration-120 cursor-pointer",
+          active
+            ? "bg-bg-secondary text-text-primary shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+            : "text-text-secondary hover:text-text-primary",
+        )}
+      >
+        <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="inline-flex items-center gap-0.5 p-1 rounded-lg border border-border-light bg-bg-secondary/50">
+      {seg("light", "Light", Sun)}
+      {seg("dark", "Dark", Moon)}
+      {seg("system", "System", Laptop)}
+    </div>
+  );
+}
+
 function AppearanceSection({
   theme,
-  toggleTheme,
+  setTheme,
 }: {
-  theme: string;
-  toggleTheme: () => void;
+  theme: ThemePreference;
+  setTheme: (v: ThemePreference) => void;
 }) {
   return (
     <div>
       <SectionHeading title="Appearance" />
       <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden">
-        <SettingsRow label="Theme" description="Switch between light and dark interface">
-          <button
-            onClick={toggleTheme}
-            className={cn(
-              "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors duration-150 cursor-pointer",
-              theme === "dark"
-                ? "bg-[var(--toggle-on)] border-[var(--toggle-on)]"
-                : "bg-bg-secondary border-border",
-            )}
-          >
-            <span
-              className={cn(
-                "inline-block h-4 w-4 rounded-full bg-[var(--toggle-knob)] shadow-sm transition-transform duration-150",
-                theme === "dark" ? "translate-x-[17px]" : "translate-x-[1px]",
-              )}
-            />
-          </button>
+        <SettingsRow
+          label="Theme"
+          description="Use a fixed look or follow your system setting"
+          icon={<Sun className="h-4 w-4" strokeWidth={1.5} />}
+        >
+          <ThemeSegmented value={theme} onChange={setTheme} />
         </SettingsRow>
+      </div>
+    </div>
+  );
+}
+
+type ApprovalPolicyValue = "untrusted" | "on-failure" | "on-request" | "never";
+type SandboxModeValue = "read-only" | "workspace-write" | "danger-full-access";
+
+function normalizeApprovalPolicy(raw: unknown): ApprovalPolicyValue {
+  if (
+    raw === "untrusted" ||
+    raw === "on-failure" ||
+    raw === "on-request" ||
+    raw === "never"
+  ) {
+    return raw;
+  }
+  return "on-request";
+}
+
+function normalizeSandboxMode(raw: unknown): SandboxModeValue {
+  if (
+    raw === "read-only" ||
+    raw === "workspace-write" ||
+    raw === "danger-full-access"
+  ) {
+    return raw;
+  }
+  return "read-only";
+}
+
+function isGranularApprovalPolicy(raw: unknown): boolean {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    "granular" in raw &&
+    typeof (raw as { granular?: unknown }).granular === "object"
+  );
+}
+
+function AgentSection() {
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicyValue>("on-request");
+  const [approvalPolicyGranular, setApprovalPolicyGranular] = useState(false);
+  const [sandboxMode, setSandboxMode] = useState<SandboxModeValue>("read-only");
+  const [instructions, setInstructions] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await rpcRequest<{ config?: Record<string, unknown> }>("config/read", {});
+      const cfg = res?.config ?? {};
+      const apRaw = cfg.approval_policy;
+      if (isGranularApprovalPolicy(apRaw)) {
+        setApprovalPolicyGranular(true);
+        setApprovalPolicy("on-request");
+      } else {
+        setApprovalPolicyGranular(false);
+        setApprovalPolicy(normalizeApprovalPolicy(apRaw));
+      }
+      setSandboxMode(normalizeSandboxMode(cfg.sandbox_mode));
+      setInstructions(typeof cfg.instructions === "string" ? cfg.instructions : "");
+    } catch {
+      setSaveHint("Couldn’t load agent settings.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const persistAgent = async () => {
+    setSaving(true);
+    setSaveHint(null);
+    try {
+      const edits: Array<{
+        keyPath: string;
+        value: unknown;
+        mergeStrategy: "replace";
+      }> = [];
+      if (!approvalPolicyGranular) {
+        edits.push({
+          keyPath: "approval_policy",
+          value: approvalPolicy,
+          mergeStrategy: "replace",
+        });
+      }
+      edits.push(
+        {
+          keyPath: "sandbox_mode",
+          value: sandboxMode,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "instructions",
+          value: instructions.trim() || null,
+          mergeStrategy: "replace",
+        },
+      );
+      await rpcRequest("config/batchWrite", {
+        edits,
+        reloadUserConfig: true,
+      });
+      setSaveHint("Saved.");
+      window.setTimeout(() => setSaveHint(null), 2000);
+    } catch {
+      setSaveHint("Couldn’t save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approvalOptions: {
+    value: ApprovalPolicyValue;
+    label: string;
+    description: string;
+  }[] = [
+    {
+      value: "untrusted",
+      label: "Untrusted",
+      description: "Always ask before taking action",
+    },
+    {
+      value: "on-failure",
+      label: "On failure",
+      description: "Ask only when a command fails",
+    },
+    {
+      value: "on-request",
+      label: "On request",
+      description: "Ask when escalation is requested",
+    },
+    {
+      value: "never",
+      label: "Never",
+      description: "Run without asking for approval",
+    },
+  ];
+
+  const sandboxOptions: {
+    value: SandboxModeValue;
+    label: string;
+    description: string;
+  }[] = [
+    {
+      value: "read-only",
+      label: "Read only",
+      description: "Can read files, but cannot edit them",
+    },
+    {
+      value: "workspace-write",
+      label: "Workspace write",
+      description: "Can edit files, but only in this workspace",
+    },
+    {
+      value: "danger-full-access",
+      label: "Full access",
+      description: "Can edit files outside this workspace",
+    },
+  ];
+
+  return (
+    <div>
+      <SectionHeading
+        title="Agent"
+        description="How Codex asks for approval, what it can change on disk, and your custom instructions."
+      />
+
+      <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden mb-6">
+        {loading ? (
+          <div className="px-4 py-4 text-[12px] text-text-faint">Loading…</div>
+        ) : (
+          <>
+            <SettingsRow
+              label="Approval policy"
+              description={
+                approvalPolicyGranular
+                  ? "Your config uses granular approval rules. Edit config.toml to change them."
+                  : "Choose when Codex asks for approval"
+              }
+              icon={<SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />}
+            >
+              <SettingsChoiceField
+                value={approvalPolicy}
+                options={approvalOptions}
+                onChange={setApprovalPolicy}
+                disabled={saving || approvalPolicyGranular}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="Sandbox settings"
+              description="Choose how much Codex can do when running commands"
+              icon={<Layers className="h-4 w-4" strokeWidth={1.5} />}
+            >
+              <SettingsChoiceField
+                value={sandboxMode}
+                options={sandboxOptions}
+                onChange={setSandboxMode}
+                disabled={saving}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="Instructions"
+              description="Extra guidance applied to the agent (personalization)"
+              icon={<Bot className="h-4 w-4" strokeWidth={1.5} />}
+            >
+              <textarea
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                disabled={saving}
+                rows={5}
+                placeholder="Optional instructions for Codex…"
+                className="w-full min-h-[120px] px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120 resize-y"
+              />
+            </SettingsRow>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="text-[11.5px] text-text-tertiary min-w-0">
+          {saveHint ?? "Writes to your user config."}
+        </div>
+        <button
+          type="button"
+          onClick={() => void persistAgent()}
+          disabled={saving || loading}
+          className={cn(
+            "px-3 py-1.5 rounded-md text-[11.5px] font-medium transition-colors duration-120 cursor-pointer",
+            saving || loading
+              ? "bg-bg-secondary text-text-faint border border-border-light cursor-default"
+              : "bg-text-primary text-bg-card hover:opacity-90",
+          )}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
     </div>
   );
@@ -1176,12 +1572,71 @@ function McpServerModal({
   );
 }
 
+function draftFromRegistryServer(server: RegistryServer): McpServerDraft {
+  const name = slugifyMcpServerName(server.name);
+  const httpRemote = server.remotes?.find(
+    (r) => r.type === "streamable-http" && typeof r.url === "string" && r.url.length > 0,
+  );
+  if (httpRemote?.url) {
+    return {
+      ...buildEmptyDraft("create", name),
+      transport: "streamable_http",
+      url: httpRemote.url,
+    };
+  }
+  const npmPkg = server.packages?.find(
+    (p) => p.transport?.type === "stdio" && typeof p.identifier === "string" && p.identifier,
+  );
+  if (npmPkg?.identifier) {
+    return {
+      ...buildEmptyDraft("create", name),
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", npmPkg.identifier],
+    };
+  }
+  return buildEmptyDraft("create", name);
+}
+
 function McpSection() {
   const [servers, setServers] = useState<McpServerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalDraft, setModalDraft] = useState<McpServerDraft | null>(null);
   const [oauthStatusByServer, setOauthStatusByServer] = useState<Record<string, string>>({});
   const [busyServer, setBusyServer] = useState<string | null>(null);
+  const [registryQuery, setRegistryQuery] = useState("");
+  const [registryResults, setRegistryResults] = useState<RegistryServer[]>([]);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryErr, setRegistryErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        setRegistryLoading(true);
+        setRegistryErr(null);
+        try {
+          const data = await searchMcpRegistry(registryQuery, { limit: 18 });
+          if (cancelled) return;
+          const list = (data.servers ?? [])
+            .map((x) => x.server)
+            .filter((s): s is RegistryServer => Boolean(s?.name));
+          setRegistryResults(list);
+        } catch (e) {
+          if (!cancelled) {
+            setRegistryErr(e instanceof Error ? e.message : "Search failed");
+            setRegistryResults([]);
+          }
+        } finally {
+          if (!cancelled) setRegistryLoading(false);
+        }
+      })();
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [registryQuery]);
 
   const refresh = () => {
     setLoading(true);
@@ -1294,6 +1749,69 @@ function McpSection() {
         title="MCP Servers"
         description="Connect external tools and data sources."
       />
+
+      <div className="mb-8">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <span className="label-mono">Official registry</span>
+          <a
+            href="https://registry.modelcontextprotocol.io/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary transition-colors duration-120"
+          >
+            registry.modelcontextprotocol.io
+            <ExternalLink className="h-3 w-3 opacity-70" strokeWidth={1.75} />
+          </a>
+        </div>
+        <div className="relative mb-3">
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-faint pointer-events-none"
+            strokeWidth={1.75}
+          />
+          <input
+            type="search"
+            value={registryQuery}
+            onChange={(e) => setRegistryQuery(e.target.value)}
+            placeholder="Search servers by name or description…"
+            className="w-full pl-9 pr-3 py-2.5 rounded-md border border-border-light bg-bg-input text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+          />
+        </div>
+        {registryErr && (
+          <div className="text-[11.5px] text-accent-red mb-2">{registryErr}</div>
+        )}
+        <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden max-h-[320px] overflow-y-auto">
+          {registryLoading && registryResults.length === 0 ? (
+            <div className="px-4 py-3 text-[12px] text-text-faint">Searching…</div>
+          ) : registryResults.length === 0 ? (
+            <div className="px-4 py-3 text-[12px] text-text-faint">
+              No matches. Try another query or open the registry in your browser.
+            </div>
+          ) : (
+            registryResults.map((s) => (
+              <div
+                key={s.name}
+                className="px-4 py-3 flex items-start justify-between gap-4 border-t border-border-light first:border-t-0"
+              >
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-text-primary truncate">
+                    {s.title ?? s.name}
+                  </div>
+                  <div className="text-[11px] text-text-tertiary mt-0.5 line-clamp-2">
+                    {s.description ?? "—"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalDraft(draftFromRegistryServer(s))}
+                  className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-medium border border-border-default text-text-secondary hover:text-text-primary hover:border-border-focus transition-all duration-120 cursor-pointer"
+                >
+                  Add
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
