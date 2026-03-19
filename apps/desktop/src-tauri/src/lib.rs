@@ -1,9 +1,18 @@
 mod codex_bridge;
 
+use base64::Engine;
 use codex_bridge::CodexBridge;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppListItemResult {
+    id: String,
+    name: String,
+    is_accessible: bool,
+}
 
 #[tauri::command]
 async fn rpc_request(
@@ -71,8 +80,20 @@ async fn open_in_app(app_id: String, path: String) -> Result<(), String> {
         std::process::Command::new("open")
             .args(["-a", "Cursor", path_utf8.as_ref()])
             .status()
+    } else if id_lower.contains("ghostty") {
+        std::process::Command::new("open")
+            .args(["-a", "Ghostty", path_utf8.as_ref()])
+            .status()
     } else if id_lower.contains("vscode") || id_lower == "code" {
         std::process::Command::new("code").arg(&path).status()
+    } else if id_lower.contains("visualstudio") {
+        std::process::Command::new("open")
+            .args(["-a", "Visual Studio", path_utf8.as_ref()])
+            .status()
+    } else if id_lower.contains("xcode") {
+        std::process::Command::new("open")
+            .args(["-a", "Xcode", path_utf8.as_ref()])
+            .status()
     } else if id_lower.contains("terminal") {
         #[cfg(target_os = "macos")]
         {
@@ -100,6 +121,205 @@ async fn open_in_app(app_id: String, path: String) -> Result<(), String> {
     };
     status.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+async fn detect_open_apps() -> Result<Vec<AppListItemResult>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(detect_open_apps_macos)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+async fn resolve_app_icon(app_id: String, app_name: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(move || resolve_app_icon_macos(&app_id, &app_name))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app_id, app_name);
+        Ok(None)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_app_icon_macos(app_id: &str, app_name: &str) -> Result<Option<String>, String> {
+    let app_path = find_application_path(app_id, app_name);
+    let Some(app_path) = app_path else {
+        return Ok(None);
+    };
+
+    let icns_path = read_icon_file_from_plist(&app_path)?;
+    let Some(icns_path) = icns_path else {
+        return Ok(None);
+    };
+
+    let tmp_name = format!("awencode-open-in-{}.png", sanitize_for_file_name(app_id));
+    let png_path = std::env::temp_dir().join(tmp_name);
+    let png_path_str = png_path.to_string_lossy().to_string();
+    let icns_str = icns_path.to_string_lossy().to_string();
+
+    let status = std::process::Command::new("sips")
+        .args([
+            "-s", "format", "png",
+            &icns_str,
+            "--resampleHeightWidthMax", "64",
+            "--out", &png_path_str,
+        ])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Ok(None);
+    }
+
+    let png_bytes = std::fs::read(&png_path).map_err(|e| e.to_string())?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+    Ok(Some(format!("data:image/png;base64,{encoded}")))
+}
+
+#[cfg(target_os = "macos")]
+fn read_icon_file_from_plist(
+    app_path: &std::path::Path,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let plist_path = app_path.join("Contents/Info.plist");
+    if !plist_path.exists() {
+        return Ok(None);
+    }
+    let plist_str = plist_path.to_string_lossy().to_string();
+
+    let output = std::process::Command::new("defaults")
+        .args(["read", &plist_str, "CFBundleIconFile"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let icon_name = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_string();
+    if icon_name.is_empty() {
+        return Ok(None);
+    }
+
+    let resources = app_path.join("Contents/Resources");
+    // Try with .icns extension first, then as-is (some bundles omit the extension)
+    for candidate in [
+        resources.join(format!("{icon_name}.icns")),
+        resources.join(&icon_name),
+    ] {
+        if candidate.exists() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn find_application_path(app_id: &str, _app_name: &str) -> Option<std::path::PathBuf> {
+    resolve_known_app_path(app_id)
+}
+
+/// All filesystem locations macOS places app bundles, in priority order.
+#[cfg(target_os = "macos")]
+fn app_search_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = vec![
+        std::path::PathBuf::from("/Applications"),
+        std::path::PathBuf::from("/System/Applications"),
+        std::path::PathBuf::from("/System/Applications/Utilities"),
+        std::path::PathBuf::from("/System/Library/CoreServices"),
+    ];
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(std::path::Path::new(&home).join("Applications"));
+    }
+    roots
+}
+
+#[cfg(target_os = "macos")]
+fn find_app_bundle_path(bundle_name: &str) -> Option<std::path::PathBuf> {
+    for root in app_search_roots() {
+        let candidate = root.join(bundle_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn detect_open_apps_macos() -> Vec<AppListItemResult> {
+    let candidates = [
+        ("cursor", "Cursor", "Cursor.app"),
+        ("ghostty", "Ghostty", "Ghostty.app"),
+        ("vscode", "VS Code", "Visual Studio Code.app"),
+        ("visualstudio", "Visual Studio", "Visual Studio.app"),
+        ("xcode", "Xcode", "Xcode.app"),
+        ("terminal", "Terminal", "Terminal.app"),
+        ("finder", "Finder", "Finder.app"),
+    ];
+    let mut apps = Vec::new();
+    for (id, name, bundle) in candidates {
+        if find_app_bundle_path(bundle).is_some() {
+            apps.push(AppListItemResult {
+                id: id.to_string(),
+                name: name.to_string(),
+                is_accessible: true,
+            });
+        }
+    }
+    apps
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_known_app_path(app_id: &str) -> Option<std::path::PathBuf> {
+    let id_lower = app_id.to_lowercase();
+    let bundle = if id_lower.contains("cursor") {
+        "Cursor.app"
+    } else if id_lower.contains("ghostty") {
+        "Ghostty.app"
+    } else if id_lower.contains("vscode") || id_lower == "code" {
+        "Visual Studio Code.app"
+    } else if id_lower.contains("visualstudio") {
+        "Visual Studio.app"
+    } else if id_lower.contains("xcode") {
+        "Xcode.app"
+    } else if id_lower.contains("terminal") {
+        "Terminal.app"
+    } else if id_lower.contains("finder") {
+        "Finder.app"
+    } else {
+        return None;
+    };
+    find_app_bundle_path(bundle)
+}
+
+#[cfg(target_os = "macos")]
+fn sanitize_for_file_name(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "app".to_string()
+    } else {
+        sanitized
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -279,6 +499,8 @@ pub fn run() {
             codex_set_api_keys,
             git_clone,
             open_in_app,
+            detect_open_apps,
+            resolve_app_icon,
             open_url,
             get_git_info,
             git_commit,

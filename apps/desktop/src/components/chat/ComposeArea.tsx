@@ -39,12 +39,31 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
+  const azureDeploymentName = useSettingsStore((s) => s.azureDeploymentName);
   const enabledModels = useSettingsStore((s) => s.enabledModels);
   const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
   const setSelectedReasoningEffort = useSettingsStore((s) => s.setSelectedReasoningEffort);
 
-  const enabledModelList = CURATED_MODELS.filter((m) => enabledModels[m.id]);
-  const selectedModel = CURATED_MODELS.find((m) => m.id === selectedModelId) ?? enabledModelList[0] ?? CURATED_MODELS[0];
+  const azureDeployment = azureDeploymentName.trim();
+  const modelOptions = [
+    ...CURATED_MODELS,
+    ...(azureDeployment
+      ? [
+          {
+            id: azureDeployment,
+            provider: "azure-openai-custom" as const,
+            name: azureDeployment,
+            description: "Your Azure deployment",
+          },
+        ]
+      : []),
+  ];
+
+  const enabledModelList = modelOptions.filter((m) => enabledModels[m.id]);
+  const selectedModel =
+    modelOptions.find((m) => m.id === selectedModelId) ??
+    enabledModelList[0] ??
+    modelOptions[0];
 
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();

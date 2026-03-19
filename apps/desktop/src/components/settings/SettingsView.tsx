@@ -219,20 +219,40 @@ function GeneralSection({
       if (azureDeploymentBaseUrl) {
         await rpcRequest("config/batchWrite", {
           edits: [
-            { keyPath: "model_providers.azure-openai.name", value: "Azure OpenAI", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure-openai.base_url", value: azureDeploymentBaseUrl, mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure-openai.env_key", value: "AZURE_OPENAI_API_KEY", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure-openai.wire_api", value: "responses", mergeStrategy: "replace" },
-            { keyPath: "model_providers.azure-openai.query_params.api-version", value: "2025-03-01-preview", mergeStrategy: "replace" },
+            {
+              keyPath: "model_providers.azure-openai-custom.name",
+              value: "Azure OpenAI (Custom)",
+              mergeStrategy: "replace",
+            },
+            {
+              keyPath: "model_providers.azure-openai-custom.base_url",
+              value: azureDeploymentBaseUrl,
+              mergeStrategy: "replace",
+            },
+            {
+              keyPath: "model_providers.azure-openai-custom.env_key",
+              value: "AZURE_OPENAI_API_KEY",
+              mergeStrategy: "replace",
+            },
+            {
+              keyPath: "model_providers.azure-openai-custom.wire_api",
+              value: "responses",
+              mergeStrategy: "replace",
+            },
+            {
+              keyPath: "model_providers.azure-openai-custom.query_params.api-version",
+              value: "2025-03-01-preview",
+              mergeStrategy: "replace",
+            },
           ],
           reloadUserConfig: true,
         });
       }
 
       await invoke("codex_set_api_keys", {
-        openai_api_key: draftOpenAi,
-        openrouter_api_key: draftOpenRouter,
-        azure_api_key: draftAzure,
+        openaiApiKey: draftOpenAi,
+        openrouterApiKey: draftOpenRouter,
+        azureApiKey: draftAzure,
       });
       setApplyStatus("applied");
       window.setTimeout(() => setApplyStatus("idle"), 1200);
@@ -389,17 +409,30 @@ function GeneralSection({
       <div className="mb-2">
         <div className="label-mono mb-3">Models</div>
         <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden divide-y divide-border-light">
-          {CURATED_MODELS.map((m) => {
+          {[
+            ...CURATED_MODELS,
+            ...(azureDeploymentName.trim()
+              ? [
+                  {
+                    id: azureDeploymentName.trim(),
+                    provider: "azure-openai-custom" as const,
+                    name: azureDeploymentName.trim(),
+                    description: "Your Azure deployment",
+                  },
+                ]
+              : []),
+          ].map((m) => {
             const enabled = enabledModels[m.id];
             const selected = selectedModelId === m.id;
             const providerOverride = modelProviderOverrides?.[m.id];
             const effectiveProvider = providerOverride ?? m.provider;
             const hasAzure = azureDeploymentName.trim().length > 0;
-            const canSwitchProviders = m.id.startsWith("gpt-");
+            const isCuratedModel = CURATED_MODELS.some((c) => c.id === m.id);
+            const canSwitchProviders = isCuratedModel;
             const providerOptions = ([
               { id: "openai", label: "OpenAI", enabled: openAiApiKey.trim().length > 0 },
               { id: "openrouter", label: "OpenRouter", enabled: openRouterApiKey.trim().length > 0 },
-              { id: "azure-openai", label: "Azure", enabled: hasAzure },
+              { id: "azure-openai-custom", label: "Azure", enabled: hasAzure },
             ] satisfies Array<{ id: ModelProviderId; label: string; enabled: boolean }>).filter((p) =>
               !canSwitchProviders ? p.id === m.provider : true,
             );

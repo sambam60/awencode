@@ -87,11 +87,13 @@ impl CodexBridge {
     }
 
     pub async fn start(&mut self, app_handle: &AppHandle) -> Result<(), String> {
-        let codex_bin = which::which("codex")
-            .map_err(|e| format!("codex binary not found in PATH: {e}. Install codex-rs first."))?;
+        let codex_bin = which::which("codex-app-server").map_err(|e| {
+            format!(
+                "codex-app-server binary not found in PATH: {e}. Build codex-rs (app-server) first."
+            )
+        })?;
 
         let mut cmd = Command::new(codex_bin);
-        cmd.arg("app-server");
         if let Some(key) = self.openai_api_key.as_deref() {
             cmd.env("OPENAI_API_KEY", key);
         }

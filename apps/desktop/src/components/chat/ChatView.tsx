@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -258,22 +258,68 @@ function GitButton({
 
 const APP_ICON_MAP: Record<string, typeof Box> = {
   cursor: Box,
+  ghostty: Terminal,
   vscode: Code2,
   code: Code2,
+  visualstudio: Code2,
+  xcode: Code2,
   terminal: Terminal,
   finder: FolderOpen,
 };
 
 function OpenInButton() {
   const [open, setOpen] = useState(false);
+  const [appIcons, setAppIcons] = useState<Record<string, string>>({});
+  const [detectedApps, setDetectedApps] = useState<Array<{ id: string; name: string; isAccessible: boolean }>>([]);
   const projectPath = useAppStore((s) => s.projectPath);
   const apps = useAppListStore((s) => s.apps);
-  const displayApps = apps.length > 0 ? apps : [
-    { id: "cursor", name: "Cursor", isAccessible: true },
-    { id: "vscode", name: "VS Code", isAccessible: true },
-    { id: "terminal", name: "Terminal", isAccessible: true },
-    { id: "finder", name: "Finder", isAccessible: true },
-  ];
+  const displayApps = useMemo(
+    () => (detectedApps.length > 0 ? detectedApps : apps).filter((app) => app.isAccessible),
+    [apps, detectedApps],
+  );
+
+  useEffect(() => {
+    invoke<Array<{ id: string; name: string; isAccessible: boolean }>>("detect_open_apps")
+      .then((localApps) => {
+        if (Array.isArray(localApps)) {
+          setDetectedApps(localApps);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveIcons = async () => {
+      const entries = await Promise.all(
+        displayApps.map(async (app) => {
+          try {
+            const iconDataUrl = await invoke<string | null>("resolve_app_icon", {
+              appId: app.id,
+              appName: app.name,
+            });
+            return [app.id, iconDataUrl] as const;
+          } catch {
+            return [app.id, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setAppIcons((prev) => {
+        const next = { ...prev };
+        for (const [appId, iconDataUrl] of entries) {
+          if (iconDataUrl) {
+            next[appId] = iconDataUrl;
+          }
+        }
+        return next;
+      });
+    };
+    resolveIcons().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [displayApps]);
 
   const handleOpenIn = async (appId: string) => {
     setOpen(false);
@@ -300,6 +346,7 @@ function OpenInButton() {
         <div className="absolute right-0 top-full mt-1.5 w-44 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
           {displayApps.map((app) => {
             const Icon = APP_ICON_MAP[app.id.toLowerCase()] ?? Box;
+            const iconDataUrl = appIcons[app.id];
             return (
               <button
                 key={app.id}
@@ -307,7 +354,15 @@ function OpenInButton() {
                 disabled={!projectPath}
                 className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left disabled:opacity-50 disabled:cursor-default"
               >
-                <Icon size={12} className="text-text-faint shrink-0" />
+                {iconDataUrl ? (
+                  <img
+                    src={iconDataUrl}
+                    alt=""
+                    className="w-4 h-4 rounded-[3px] shrink-0 object-contain"
+                  />
+                ) : (
+                  <Icon size={24} className="text-text-faint shrink-0" />
+                )}
                 <span className="text-[12px] text-text-primary">{app.name}</span>
               </button>
             );

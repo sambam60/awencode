@@ -95,7 +95,7 @@ export function Orchestrator() {
             className="p-1.5 rounded cursor-pointer text-text-primary dark:text-text-faint hover:opacity-80 dark:hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120"
             title="New chat (adds to Active)"
           >
-            <img src="/newchat_icon.svg" alt="" className="h-3 w-3 shrink-0 dark:invert" />
+            <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
           </button>
           {/* Project name — sans, to the right of new chat */}
           {projectName && (
