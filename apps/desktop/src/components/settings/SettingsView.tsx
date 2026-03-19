@@ -1,4 +1,12 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, type ComponentType } from "react";
+import {
+  useState,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useCallback,
+  type ComponentType,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -29,17 +37,56 @@ import { useResolvedThemeIsDark } from "@/lib/use-resolved-theme-dark";
 
 type NavIcon = ComponentType<LucideProps>;
 
+/** MCP mark from public asset geometry; inline so strokes use `currentColor` like Lucide. */
+function McpNavMark({ className }: LucideProps) {
+  const clipPathId = `mcp_nav_clip_${useId().replace(/:/g, "_")}`;
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 180 180"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <g clipPath={`url(#${clipPathId})`}>
+        <path
+          d="M18 84.8528L85.8822 16.9706C95.2548 7.59798 110.451 7.59798 119.823 16.9706V16.9706C129.196 26.3431 129.196 41.5391 119.823 50.9117L68.5581 102.177"
+          stroke="currentColor"
+          strokeWidth="12"
+          strokeLinecap="round"
+        />
+        <path
+          d="M69.2652 101.47L119.823 50.9117C129.196 41.5391 144.392 41.5391 153.765 50.9117L154.118 51.2652C163.491 60.6378 163.491 75.8338 154.118 85.2063L92.7248 146.6C89.6006 149.724 89.6006 154.789 92.7248 157.913L105.331 170.52"
+          stroke="currentColor"
+          strokeWidth="12"
+          strokeLinecap="round"
+        />
+        <path
+          d="M102.853 33.9411L52.6482 84.1457C43.2756 93.5183 43.2756 108.714 52.6482 118.087V118.087C62.0208 127.459 77.2167 127.459 86.5893 118.087L136.794 67.8822"
+          stroke="currentColor"
+          strokeWidth="12"
+          strokeLinecap="round"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipPathId}>
+          <rect width="180" height="180" fill="white" />
+        </clipPath>
+      </defs>
+    </svg>
+  );
+}
+
 const NAV_ITEMS: Array<{
   id: string;
   label: string;
-  icon?: NavIcon;
-  iconSrc?: string;
+  icon: NavIcon;
 }> = [
   { id: "general", label: "General", icon: SlidersHorizontal },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "usage", label: "Usage", icon: BarChart2 },
-  { id: "mcp", label: "MCP Servers", iconSrc: "/mcp_logo.svg" },
+  { id: "mcp", label: "MCP Servers", icon: McpNavMark },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "environments", label: "Environments", icon: Layers },
   { id: "worktrees", label: "Worktrees", icon: Box },
@@ -120,15 +167,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
                       : "text-text-secondary hover:text-text-primary hover:bg-bg-card/60",
                   )}
                 >
-                  {item.iconSrc ? (
-                    <img
-                      src={item.iconSrc}
-                      alt=""
-                      className="h-3.5 w-3.5 shrink-0 opacity-80"
-                    />
-                  ) : Icon ? (
-                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
-                  ) : null}
+                  <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
                   <span className="truncate">{item.label}</span>
                 </button>
               );
