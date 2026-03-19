@@ -142,7 +142,7 @@
   --text-secondary: #6b6f76;
   --text-tertiary: #9b9ea4;
   --text-faint: #b8bbc0;
-  --text-links: #99BBBB;
+  --text-links: #9bd3d3;
 
   --accent-blue: #4a7fd4;
   --accent-amber: #c78f2e;
@@ -313,4 +313,14 @@
 
 .animate-cursor-blink {
   animation: cursor-blink 0.9s step-end infinite;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }

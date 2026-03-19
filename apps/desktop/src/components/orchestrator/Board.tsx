@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DetailPanel } from "./DetailPanel";
 import { AgentCard } from "./AgentCard";
 import { CommandBar } from "../command/CommandBar";
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 
 const ALL_COLUMNS = ["queued", "active", "review", "deployed"] as const;
+type BoardColumn = (typeof ALL_COLUMNS)[number];
 
 export function Orchestrator() {
   const agents = useThreadStore((s) => s.agents);
@@ -20,6 +22,14 @@ export function Orchestrator() {
   const projectName = useAppStore((s) => s.projectName);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+
+  const [collapsedCols, setCollapsedCols] = useState<Partial<Record<BoardColumn, boolean>>>(
+    {},
+  );
+
+  const toggleCol = (c: BoardColumn) => {
+    setCollapsedCols((prev) => ({ ...prev, [c]: !prev[c] }));
+  };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -137,51 +147,105 @@ export function Orchestrator() {
               const colAgents = agents.filter((a) => a.status === col);
               const config = STATUS_CONFIG[col];
               const isLast = i === ALL_COLUMNS.length - 1;
+              const collapsed = Boolean(collapsedCols[col]);
               return (
                 <div
                   key={col}
                   className={cn(
-                    "flex flex-col flex-1 min-w-[180px]",
-                    !isLast && "pr-5 mr-5 border-r border-border-light",
+                    "group/col flex flex-col shrink-0 transition-[width,min-width,max-width,padding,margin] duration-200 ease-out",
+                    collapsed
+                      ? cn(
+                          "w-[44px] min-w-[44px] max-w-[44px]",
+                          !isLast && "pr-2 mr-2 border-r border-border-light",
+                        )
+                      : cn(
+                          "flex-1 min-w-[180px]",
+                          !isLast && "pr-5 mr-5 border-r border-border-light",
+                        ),
                   )}
                 >
-                  {/* Column header */}
-                  <div className="flex items-center gap-2 mb-3 shrink-0">
-                    <span
-                      className="inline-block w-[5px] h-[5px] rounded-full"
-                      style={{ background: config.color }}
-                    />
-                    <span className="font-mono text-[10px] uppercase tracking-label text-text-secondary">
-                      {config.label}
-                    </span>
-                    <span className="font-mono text-[10px] text-text-faint">
-                      {colAgents.length}
-                    </span>
-                  </div>
-
-                  {/* Cards */}
-                  <div className="flex flex-col gap-2">
-                    {colAgents.map((agent) => (
-                      <AgentCard
-                        key={agent.id}
-                        agent={agent}
-                        selected={selectedId === agent.id}
-                        onOpenThread={(id) => {
-                          selectAgent(id);
-                          setView("chat");
-                        }}
-                        onOpenDetails={selectAgent}
-                        compact={false}
+                  {collapsed ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleCol(col)}
+                      className="flex flex-col items-center gap-2 py-3 px-0 w-full rounded-lg hover:bg-bg-secondary/60 transition-colors duration-120 cursor-pointer border-0 bg-transparent text-inherit"
+                      title={`Expand ${config.label}`}
+                    >
+                      <span
+                        className="inline-block w-[5px] h-[5px] rounded-full shrink-0"
+                        style={{ background: config.color }}
                       />
-                    ))}
-                    {colAgents.length === 0 && (
-                      <div className="border border-dashed border-border-light rounded-lg p-5 text-center">
+                      <span
+                        className="font-mono text-[9px] uppercase tracking-label text-text-secondary max-h-[100px] truncate"
+                        style={{
+                          writingMode: "vertical-rl",
+                          textOrientation: "mixed",
+                        }}
+                      >
+                        {config.label}
+                      </span>
+                      <span className="font-mono text-[10px] text-text-faint">
+                        {colAgents.length}
+                      </span>
+                      <ChevronRight size={14} className="text-text-faint shrink-0" strokeWidth={1.5} />
+                    </button>
+                  ) : (
+                    <>
+                      {/* Column header */}
+                      <div className="relative flex items-center gap-2 mb-3 shrink-0 min-h-[22px] pl-5">
+                        <button
+                          type="button"
+                          aria-label={`Collapse ${config.label}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleCol(col);
+                          }}
+                          className={cn(
+                            "absolute left-0 top-1/2 -translate-y-1/2 z-[1] p-0.5 rounded text-text-faint hover:text-text-secondary hover:bg-bg-secondary transition-all duration-120",
+                            "opacity-0 group-hover/col:opacity-100 focus-visible:opacity-100",
+                            "outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)] focus-visible:outline-offset-2",
+                          )}
+                        >
+                          <ChevronLeft size={14} strokeWidth={1.5} />
+                        </button>
+                        <span
+                          className="inline-block w-[5px] h-[5px] rounded-full shrink-0"
+                          style={{ background: config.color }}
+                        />
+                        <span className="font-mono text-[10px] uppercase tracking-label text-text-secondary">
+                          {config.label}
+                        </span>
                         <span className="font-mono text-[10px] text-text-faint">
-                          empty
+                          {colAgents.length}
                         </span>
                       </div>
-                    )}
-                  </div>
+
+                      {/* Cards */}
+                      <div className="flex flex-col gap-2">
+                        {colAgents.map((agent) => (
+                          <AgentCard
+                            key={agent.id}
+                            agent={agent}
+                            selected={selectedId === agent.id}
+                            onOpenThread={(id) => {
+                              selectAgent(id);
+                              setView("chat");
+                            }}
+                            onOpenDetails={selectAgent}
+                            compact={false}
+                          />
+                        ))}
+                        {colAgents.length === 0 && (
+                          <div className="border border-dashed border-border-light rounded-lg p-5 text-center">
+                            <span className="font-mono text-[10px] text-text-faint">
+                              empty
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}

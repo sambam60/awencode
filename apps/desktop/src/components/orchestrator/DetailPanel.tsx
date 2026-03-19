@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
-import type { Agent, PrStatus } from "@/lib/stores/thread-store";
+import type { Agent, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
 interface DetailPanelProps {
   agent: Agent;
@@ -17,6 +17,40 @@ function StatCard({ label, value }: { label: string; value: string }) {
     <div className="bg-bg-card border border-border-light rounded px-3 py-2.5">
       <div className="label-mono mb-1">{label}</div>
       <div className="text-lg font-medium text-text-primary">{value}</div>
+    </div>
+  );
+}
+
+function planStepAccent(status: AgentPlanStep["status"]): string {
+  if (status === "completed") return "var(--accent-green)";
+  if (status === "inProgress") return "var(--accent-blue)";
+  return "var(--accent-grey)";
+}
+
+function AgentPlanBlock({ steps }: { steps: AgentPlanStep[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className="border border-border-light rounded-lg overflow-hidden">
+      <div className="px-3 py-2 border-b border-border-light bg-bg-secondary">
+        <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">
+          Plan
+        </span>
+      </div>
+      <ul className="divide-y divide-border-light">
+        {steps.map((s, i) => (
+          <li
+            key={i}
+            className="flex gap-2.5 px-3 py-2.5 text-[12.5px] text-text-primary leading-snug"
+            style={{
+              borderLeftWidth: 2.5,
+              borderLeftStyle: "solid",
+              borderLeftColor: planStepAccent(s.status),
+            }}
+          >
+            <span className="flex-1 min-w-0">{s.step}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -157,37 +191,25 @@ function PrStatusCard({ prStatus, prUrl }: { prStatus: PrStatus; prUrl: string |
   );
 }
 
-function PrimaryButton({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick?: () => void;
-}) {
+function OpenFullViewArrow({ className }: { className?: string }) {
   return (
-    <button
-      onClick={onClick}
-      className="bg-text-primary text-bg-card border border-text-primary text-[11.5px] font-medium px-3.5 py-[7px] rounded cursor-pointer hover:opacity-90 transition-opacity duration-120"
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={cn("shrink-0", className)}
+      aria-hidden
     >
-      {label}
-    </button>
-  );
-}
-
-function SecondaryButton({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="bg-transparent text-text-secondary border border-border text-[11.5px] font-medium px-3.5 py-[7px] rounded cursor-pointer hover:bg-bg-secondary transition-colors duration-120"
-    >
-      {label}
-    </button>
+      <path
+        d="M7 17L17 7M17 7H9M17 7V15"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -249,14 +271,14 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 px-6 border-b border-border-light">
+      {/* Tabs — first label aligns with title row (no extra horizontal inset) */}
+      <div className="flex items-end gap-6 border-b border-border-light px-6">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={cn(
-              "bg-transparent border-none cursor-pointer font-mono text-xs font-medium uppercase tracking-label px-3.5 pt-2.5 pb-2",
+              "bg-transparent border-none cursor-pointer font-mono text-xs font-medium uppercase tracking-label pt-2.5 pb-2",
               "transition-colors duration-120",
               tab === t
                 ? "text-text-primary border-b-[1.5px] border-b-text-primary"
@@ -268,15 +290,22 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         ))}
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-auto p-6">
+      {/* Tab content — same horizontal inset as header (px-6) */}
+      <div className="flex-1 overflow-auto px-6 py-6">
         {tab === "status" && (
           <div className="flex flex-col gap-5">
+            <AgentPlanBlock steps={agent.planSteps ?? []} />
+
             <div className="grid grid-cols-2 gap-2.5">
               <StatCard label="Time" value={agent.time} />
               <StatCard label="Tokens" value={agent.tokens} />
               <StatCard label="Files" value={`${agent.files.length}`} />
-              <StatCard label="Progress" value={`${agent.progress}%`} />
+              <StatCard
+                label="Progress"
+                value={
+                  (agent.planSteps?.length ?? 0) > 0 ? `${agent.progress}%` : "—"
+                }
+              />
             </div>
 
             {/* PR status from GitHub */}
@@ -313,67 +342,54 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
                 </div>
               );
             })()}
-
-            <div className="flex gap-2 flex-wrap">
-              {agent.status === "review" && (
-                <>
-                  <PrimaryButton label="approve & deploy" />
-                  <SecondaryButton label="request changes" />
-                </>
-              )}
-              {agent.status === "active" && !agent.blocked && (
-                <>
-                  <SecondaryButton label="pause" />
-                  <SecondaryButton label="redirect" />
-                </>
-              )}
-              {agent.blocked && <PrimaryButton label="unblock & continue" />}
-              {agent.status === "queued" && <PrimaryButton label="start now" />}
-            </div>
           </div>
         )}
 
         {tab === "chat" && (
-          <div className="flex flex-col h-full">
-            <button
-              onClick={onOpenChat}
-              className="flex items-center justify-between w-full px-3 py-2 mb-3 bg-bg-card border border-border-light rounded cursor-pointer font-mono text-xs text-text-tertiary hover:bg-bg-secondary transition-colors duration-120"
-            >
-              <span>Open full view</span>
-              <span className="text-base">↗</span>
-            </button>
-
-            <div className="flex-1 flex flex-col gap-2.5 mb-3">
+          <div className="flex flex-col h-full min-h-0">
+            <div className="flex-1 flex flex-col gap-3 min-h-0 overflow-auto mb-3">
               {agent.messages.length === 0 ? (
                 <div className="text-sm text-text-faint italic">
                   No messages yet.
                 </div>
               ) : (
-                agent.messages.map((m, i) => (
-                  <div
-                    key={i}
-                    className="px-3 py-2.5 bg-bg-card border border-border-light rounded"
-                  >
+                agent.messages.map((m, i) =>
+                  m.role === "you" ? (
+                    <div key={i} className="flex justify-end">
+                      <div className="max-w-[95%] px-4 py-2.5 rounded-full bg-text-primary text-bg-card text-[13px] leading-relaxed whitespace-pre-wrap">
+                        {m.content}
+                      </div>
+                    </div>
+                  ) : (
                     <div
-                      className={cn(
-                        "font-mono text-2xs font-semibold uppercase tracking-label-wide mb-1.5",
-                        m.role === "you"
-                          ? "text-text-secondary"
-                          : "text-text-faint",
-                      )}
+                      key={i}
+                      className="px-3 py-2.5 bg-bg-secondary/80 rounded-lg"
                     >
-                      {m.role}
+                      <div className="font-mono text-[9px] font-semibold uppercase tracking-label-wide text-text-faint mb-1.5">
+                        agent
+                      </div>
+                      <div className="text-[13px] text-text-primary leading-relaxed whitespace-pre-wrap">
+                        {m.content}
+                      </div>
                     </div>
-                    <div className="text-sm text-text-primary leading-relaxed">
-                      {m.content}
-                    </div>
-                  </div>
-                ))
+                  ),
+                )
               )}
             </div>
 
+            {onOpenChat && (
+              <button
+                type="button"
+                onClick={onOpenChat}
+                className="font-sans text-[12.5px] text-[var(--text-links)] flex items-center gap-0.5 bg-transparent border-0 cursor-pointer p-0 py-2 text-left shrink-0 transition-[filter] duration-150 hover:brightness-[0.88] dark:hover:brightness-[0.92]"
+              >
+                <span>Open full view</span>
+                <OpenFullViewArrow />
+              </button>
+            )}
+
             {agent.status !== "queued" && agent.status !== "deployed" && (
-              <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded">
+              <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded shrink-0">
                 <input
                   placeholder="Quick message..."
                   className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm"

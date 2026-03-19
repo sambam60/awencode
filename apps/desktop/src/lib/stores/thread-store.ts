@@ -55,6 +55,14 @@ export interface ApprovalRequest {
   availableDecisions?: string[] | null;
 }
 
+/** Mirrors Codex `TurnPlanStep` / `TurnPlanStepStatus` for UI. */
+export type AgentPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export interface AgentPlanStep {
+  step: string;
+  status: AgentPlanStepStatus;
+}
+
 export interface Agent {
   id: string;
   title: string;
@@ -80,6 +88,10 @@ export interface Agent {
   streamingBuffer?: string;
   /** True while a turn is in progress (waiting for turn/completed). */
   turnInProgress?: boolean;
+  /** Current in-flight turn id (from `turn/started`); required for `turn/interrupt`. */
+  currentTurnId?: string | null;
+  /** Agent plan / todo steps from `turn/plan/updated`. */
+  planSteps?: AgentPlanStep[];
   /** GitHub origin URL parsed from git remote. */
   originUrl?: string | null;
   /** Short SHA of the HEAD commit when this thread was opened. */
@@ -117,6 +129,16 @@ interface ThreadState {
   finalizeAgentThinking: (agentId: string) => void;
   clearAgentActivities: (agentId: string) => void;
   setAgentPendingApproval: (agentId: string, approval: ApprovalRequest | null) => void;
+  updateAgentTitle: (agentId: string, title: string) => void;
+  setAgentPlan: (agentId: string, planSteps: AgentPlanStep[]) => void;
+  updateAgentProgress: (agentId: string, progress: number) => void;
+  setAgentCurrentTurnId: (agentId: string, turnId: string | null) => void;
+}
+
+function progressFromPlanSteps(steps: AgentPlanStep[]): number {
+  if (steps.length === 0) return 0;
+  const done = steps.filter((s) => s.status === "completed").length;
+  return Math.round((100 * done) / steps.length);
 }
 
 export const useThreadStore = create<ThreadState>((set) => ({
@@ -126,7 +148,14 @@ export const useThreadStore = create<ThreadState>((set) => ({
   setAgents: (agents) => set({ agents }),
   addAgent: (agent) =>
     set((s) => ({
-      agents: [...s.agents, { ...agent, activities: agent.activities ?? [] }],
+      agents: [
+        ...s.agents,
+        {
+          ...agent,
+          activities: agent.activities ?? [],
+          planSteps: agent.planSteps ?? [],
+        },
+      ],
       selectedAgentId: agent.id,
     })),
 
@@ -296,6 +325,40 @@ export const useThreadStore = create<ThreadState>((set) => ({
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId ? { ...a, pendingApproval: approval } : a,
+      ),
+    })),
+
+  updateAgentTitle: (agentId, title) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, title } : a,
+      ),
+    })),
+
+  setAgentPlan: (agentId, planSteps) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              planSteps,
+              progress: progressFromPlanSteps(planSteps),
+            }
+          : a,
+      ),
+    })),
+
+  updateAgentProgress: (agentId, progress) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, progress } : a,
+      ),
+    })),
+
+  setAgentCurrentTurnId: (agentId, turnId) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, currentTurnId: turnId } : a,
       ),
     })),
 }));

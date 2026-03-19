@@ -2,7 +2,13 @@ import { useEffect } from "react";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
-import type { ActivityKind, ApprovalRequest, ApprovalRequestType } from "@/lib/stores/thread-store";
+import type {
+  ActivityKind,
+  AgentPlanStep,
+  AgentPlanStepStatus,
+  ApprovalRequest,
+  ApprovalRequestType,
+} from "@/lib/stores/thread-store";
 
 interface CodexMessage {
   /** Present on server requests — needed to respond. */
@@ -16,6 +22,28 @@ function findAgentIdByCodexThreadId(threadId: string): string | null {
     (a) => a.codexThreadId === threadId,
   );
   return agent?.id ?? null;
+}
+
+function threadIdFromParams(params: Record<string, unknown>): string | undefined {
+  if (typeof params.threadId === "string") return params.threadId;
+  if (typeof params.thread_id === "string") return params.thread_id;
+  return undefined;
+}
+
+function mapPlanStepStatus(raw: string): AgentPlanStepStatus {
+  if (raw === "completed") return "completed";
+  if (raw === "inProgress") return "inProgress";
+  return "pending";
+}
+
+function planStepsFromParams(plan: unknown): AgentPlanStep[] {
+  if (!Array.isArray(plan)) return [];
+  return plan.map((p) => {
+    const o = p as Record<string, unknown>;
+    const step = typeof o.step === "string" ? o.step : "";
+    const st = typeof o.status === "string" ? o.status : "pending";
+    return { step, status: mapPlanStepStatus(st) };
+  });
 }
 
 /** Derive a human-readable label + kind from a tool name / notification method. */
@@ -79,6 +107,9 @@ export function useCodexNotifications() {
   const finalizeAgentThinking = useThreadStore((s) => s.finalizeAgentThinking);
   const clearAgentActivities = useThreadStore((s) => s.clearAgentActivities);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
+  const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
+  const setAgentPlan = useThreadStore((s) => s.setAgentPlan);
+  const setAgentCurrentTurnId = useThreadStore((s) => s.setAgentCurrentTurnId);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -95,7 +126,7 @@ export function useCodexNotifications() {
       const method = msg.method;
       const params = msg.params ?? {};
       const rpcId = msg.id; // present for server requests
-      const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
+      const threadId = threadIdFromParams(params);
 
       console.log("[codex]", method, params);
 
@@ -116,8 +147,32 @@ export function useCodexNotifications() {
       if (!agentId) return;
 
       switch (method) {
+        case "thread/name/updated": {
+          const name =
+            typeof params.threadName === "string"
+              ? params.threadName
+              : typeof params.thread_name === "string"
+                ? params.thread_name
+                : null;
+          if (name != null && name.length > 0) {
+            queueMicrotask(() => {
+              updateAgentTitle(agentId, name);
+            });
+          }
+          break;
+        }
+
+        case "turn/plan/updated": {
+          setAgentPlan(agentId, planStepsFromParams(params.plan));
+          break;
+        }
+
         case "turn/started": {
           clearAgentActivities(agentId);
+          setAgentPlan(agentId, []);
+          const turn = params.turn as Record<string, unknown> | undefined;
+          const turnId = typeof turn?.id === "string" ? turn.id : null;
+          setAgentCurrentTurnId(agentId, turnId);
           setAgentTurnInProgress(agentId, true);
           setAgentStatus(agentId, "active");
           break;
@@ -133,6 +188,7 @@ export function useCodexNotifications() {
           finalizeAgentThinking(agentId);
           flushAgentStreamingBuffer(agentId);
           setAgentTurnInProgress(agentId, false);
+          setAgentCurrentTurnId(agentId, null);
           setAgentStatus(agentId, "review");
           break;
         }
@@ -340,6 +396,9 @@ export function useCodexNotifications() {
     finalizeAgentThinking,
     clearAgentActivities,
     setAgentPendingApproval,
+    updateAgentTitle,
+    setAgentPlan,
+    setAgentCurrentTurnId,
   ]);
 
   useEffect(() => {

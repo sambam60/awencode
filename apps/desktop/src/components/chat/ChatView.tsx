@@ -20,6 +20,8 @@ import {
   Pencil,
   Shield,
   Play,
+  Copy,
+  Check,
   FileEdit,
   Lock,
   FolderTree,
@@ -36,6 +38,8 @@ import { statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { rpcRequest, rpcRespond } from "@/lib/rpc-client";
+import { generateThreadTitle, interruptTurn } from "@/lib/codex-turn";
+import { isAbsoluteFilePath } from "@/lib/dnd";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
@@ -55,6 +59,21 @@ import { FileTreeView } from "./FileTreeView";
 interface ChatViewProps {
   agent: Agent;
   onBack: () => void;
+}
+
+const NEW_THREAD_TITLE = "New thread";
+
+function truncateChatTitle(text: string): string {
+  const t = text.trim();
+  if (!t) return "";
+  return t.length > 56 ? `${t.slice(0, 53)}…` : t;
+}
+
+/** First line of what we show in the thread, suitable for a default chat title. */
+function titleFromFirstSendDisplay(displayContent: string): string | null {
+  const line = displayContent.split("\n")[0]?.trim() ?? "";
+  const next = truncateChatTitle(line);
+  return next.length > 0 ? next : null;
 }
 
 // ─── File chip ────────────────────────────────────────────────────────────────
@@ -350,6 +369,17 @@ function AgentMarkdown({ content, streaming = false }: { content: string; stream
 
 function MessageRow({ message }: { message: AgentMessage }) {
   const isUser = message.role === "you";
+  const [copied, setCopied] = useState(false);
+  const copiedTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current) {
+        window.clearTimeout(copiedTimeoutRef.current);
+        copiedTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   if (isUser) {
     return (
@@ -368,7 +398,7 @@ function MessageRow({ message }: { message: AgentMessage }) {
             </div>
           )}
           {message.content && (
-            <div className="px-4 py-3 bg-text-primary text-bg-card rounded-xl rounded-br-sm text-[13px] leading-relaxed whitespace-pre-wrap">
+            <div className="px-4 py-3 bg-text-primary text-bg-card rounded-full text-[13px] leading-relaxed whitespace-pre-wrap">
               {message.content}
             </div>
           )}
@@ -389,8 +419,39 @@ function MessageRow({ message }: { message: AgentMessage }) {
   }
 
   return (
-    <div className="mb-5">
+    <div className="mb-5 group/response">
       <AgentMarkdown content={message.content} />
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(message.content).catch(() => {});
+          if (copiedTimeoutRef.current) {
+            window.clearTimeout(copiedTimeoutRef.current);
+          }
+          setCopied(true);
+          copiedTimeoutRef.current = window.setTimeout(() => {
+            setCopied(false);
+            copiedTimeoutRef.current = null;
+          }, 1200);
+        }}
+        className={cn(
+          "mt-1 inline-flex items-center justify-center rounded-sm p-1",
+          "cursor-pointer transition-all duration-200 ease-out",
+          "opacity-0 translate-y-0.5 group-hover/response:opacity-100 group-hover/response:translate-y-0",
+          "focus-visible:opacity-100 focus-visible:translate-y-0",
+          copied
+            ? "text-accent-green"
+            : "text-text-faint hover:text-text-secondary",
+        )}
+        title="Copy response"
+        aria-label="Copy response"
+      >
+        {copied ? (
+          <Check size={11} strokeWidth={2.2} />
+        ) : (
+          <Copy size={11} strokeWidth={2} />
+        )}
+      </button>
     </div>
   );
 }
@@ -1155,6 +1216,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
+  const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
 
   const clearApproval = useCallback(() => {
     setAgentPendingApproval(agent.id, null);
@@ -1200,6 +1262,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       const trimmed = message.trim();
       if (!trimmed && attachments.length === 0) return;
 
+      const wasUnsetTitle = agent.title === NEW_THREAD_TITLE;
+
       const displayContent =
         trimmed ||
         (attachments.length > 0
@@ -1214,20 +1278,34 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       });
 
+      const provisionalTitle = wasUnsetTitle
+        ? titleFromFirstSendDisplay(displayContent)
+        : null;
+      if (provisionalTitle) {
+        updateAgentTitle(agent.id, provisionalTitle);
+      }
+
       let threadId = agent.codexThreadId;
       if (!threadId) {
         try {
           const selected = getSelectedModel();
-          const res = await rpcRequest<{ thread: { id: string } }>(
-            "thread/start",
-            {
-              cwd: projectPath ?? undefined,
-              model: selected.id,
-              modelProvider: selected?.provider,
-            },
-          );
+          const res = await rpcRequest<{
+            thread: { id: string; name?: string | null };
+          }>("thread/start", {
+            cwd: projectPath ?? undefined,
+            model: selected.id,
+            modelProvider: selected?.provider,
+          });
           threadId = res?.thread?.id;
           if (threadId) setAgentCodexThreadId(agent.id, threadId);
+          const serverName =
+            typeof res?.thread?.name === "string" ? res.thread.name.trim() : "";
+          if (serverName.length > 0) {
+            const fromServer = truncateChatTitle(serverName);
+            if (fromServer.length > 0) {
+              updateAgentTitle(agent.id, fromServer);
+            }
+          }
         } catch (e) {
           console.error("thread/start failed", e);
           return;
@@ -1235,10 +1313,52 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       }
       if (!threadId) return;
 
+      if (wasUnsetTitle) {
+        const latestTitle =
+          useThreadStore
+            .getState()
+            .agents.find((a) => a.id === agent.id)
+            ?.title.trim() ?? "";
+        if (latestTitle.length > 0 && latestTitle !== NEW_THREAD_TITLE) {
+          rpcRequest("thread/name/set", { threadId, name: latestTitle }).catch((e) => {
+            console.error("thread/name/set failed", e);
+          });
+        }
+
+        if (displayContent.trim().length > 0) {
+          generateThreadTitle(displayContent)
+            .then((generatedTitle) => {
+              if (!generatedTitle) return;
+              const currentTitle =
+                useThreadStore.getState().agents.find((a) => a.id === agent.id)?.title ?? "";
+              if (
+                currentTitle !== NEW_THREAD_TITLE &&
+                provisionalTitle &&
+                currentTitle !== provisionalTitle
+              ) {
+                return;
+              }
+              updateAgentTitle(agent.id, generatedTitle);
+              return rpcRequest("thread/name/set", { threadId, name: generatedTitle });
+            })
+            .catch((e) => {
+              console.error("thread title generation failed", e);
+            });
+        }
+      }
+
       const inputItems: Array<Record<string, unknown>> = [];
       for (const att of attachments) {
         if (att.mime?.startsWith("image/") && att.dataUrl) {
-          inputItems.push({ type: "input_image", image_url: att.dataUrl });
+          inputItems.push({ type: "image", url: att.dataUrl });
+        } else if (att.mime?.startsWith("image/") && isAbsoluteFilePath(att.path)) {
+          inputItems.push({ type: "localImage", path: att.path });
+        } else if (isAbsoluteFilePath(att.path)) {
+          inputItems.push({
+            type: "mention",
+            name: att.name,
+            path: att.path,
+          });
         } else {
           inputItems.push({
             type: "text",
@@ -1264,9 +1384,11 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     [
       agent.id,
       agent.codexThreadId,
+      agent.title,
       projectPath,
       appendAgentMessage,
       setAgentCodexThreadId,
+      updateAgentTitle,
     ],
   );
 
@@ -1305,16 +1427,30 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   }, [fileTreeOpen]);
 
   const handleStop = useCallback(async () => {
-    if (!agent.codexThreadId) return;
+    const tid = agent.codexThreadId;
+    const turnId = agent.currentTurnId;
+    if (!tid || !turnId) return;
     setStopping(true);
     try {
-      await rpcRequest("turn/stop", { threadId: agent.codexThreadId });
+      await interruptTurn(tid, turnId);
+      const {
+        finalizeAgentThinking,
+        flushAgentStreamingBuffer,
+        setAgentTurnInProgress,
+        setAgentStatus,
+        setAgentCurrentTurnId,
+      } = useThreadStore.getState();
+      finalizeAgentThinking(agent.id);
+      flushAgentStreamingBuffer(agent.id);
+      setAgentTurnInProgress(agent.id, false);
+      setAgentCurrentTurnId(agent.id, null);
+      setAgentStatus(agent.id, "review");
     } catch {
       // ignore
     } finally {
       setStopping(false);
     }
-  }, [agent.codexThreadId]);
+  }, [agent.id, agent.codexThreadId, agent.currentTurnId]);
 
   // ⌘Enter → accept pending approval
   useEffect(() => {
@@ -1613,7 +1749,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                 {isRunning && (
                   <button
                     onClick={handleStop}
-                    disabled={stopping}
+                    disabled={stopping || !agent.currentTurnId}
                     className="flex items-center gap-1.5 px-3 h-full hover:bg-bg-card transition-colors duration-120 cursor-pointer disabled:opacity-50 border-r border-border-light"
                   >
                     <span className="font-sans text-[12px] text-text-secondary">

@@ -1,6 +1,16 @@
 import { useState, useRef, useCallback } from "react";
-import { Plus, ChevronDown, Mic, ArrowUp, X, FileText, Image } from "lucide-react";
+import { Plus, ChevronDown, Mic, ArrowUp, X, Image } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
+import {
+  AWENCODE_FILE_PATH_MIME,
+  AWENCODE_FILE_KIND_MIME,
+  dataTransferMightContainFiles,
+  filePathsFromUriList,
+  isAbsoluteFilePath,
+} from "@/lib/dnd";
+import { FolderIcon, resolveSetiKey, SetiIcon } from "@/lib/seti-icons";
+import { useIsDarkMode } from "@/lib/use-is-dark-mode";
 import { useSettingsStore, CURATED_MODELS, type ReasoningEffort } from "@/lib/stores/settings-store";
 
 export interface Attachment {
@@ -10,6 +20,8 @@ export interface Attachment {
   mime?: string;
   /** base64 data URI for images */
   dataUrl?: string;
+  /** From tree drag, OS drop, or path probe — drives folder vs Seti file icon */
+  isDirectory?: boolean;
 }
 
 interface ComposeAreaProps {
@@ -34,8 +46,10 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const [modelOpen, setModelOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragHighlight, setDragHighlight] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composeRootRef = useRef<HTMLDivElement>(null);
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
@@ -43,6 +57,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const enabledModels = useSettingsStore((s) => s.enabledModels);
   const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
   const setSelectedReasoningEffort = useSettingsStore((s) => s.setSelectedReasoningEffort);
+  const isDark = useIsDarkMode();
 
   const azureDeployment = azureDeploymentName.trim();
   const modelOptions = [
@@ -76,9 +91,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
     }
   }, [value, attachments, onSend]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length === 0) return;
+  const addFilesFromList = useCallback((files: File[]) => {
     files.forEach((file) => {
       const isImage = file.type.startsWith("image/");
       if (isImage) {
@@ -102,7 +115,104 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
         ]);
       }
     });
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    addFilesFromList(files);
     e.target.value = "";
+  };
+
+  const endDragHighlight = () => setDragHighlight(false);
+
+  const composeDragLooksLikeDrop = (dt: DataTransfer) => {
+    if (dataTransferMightContainFiles(dt)) return true;
+    // WebKit / OS file drags sometimes expose no types until drop; still need highlight + dragOver default prevented.
+    const types = dt.types ? Array.from(dt.types) : [];
+    if (types.length === 0) return true;
+    return false;
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!composeDragLooksLikeDrop(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragHighlight(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    const root = composeRootRef.current;
+    const related = e.relatedTarget as Node | null;
+    if (root && related && root.contains(related)) return;
+    endDragHighlight();
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    if (composeDragLooksLikeDrop(e.dataTransfer)) {
+      setDragHighlight(true);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    endDragHighlight();
+
+    const dt = e.dataTransfer;
+    const seenPaths = new Set<string>();
+    const treeKind = dt.getData(AWENCODE_FILE_KIND_MIME);
+
+    void (async () => {
+      const pushPath = async (raw: string, kindHint?: "file" | "folder") => {
+        const path = raw.trim();
+        if (!path || seenPaths.has(path)) return;
+        seenPaths.add(path);
+        const name = path.split(/[/\\]/).pop() ?? path;
+        let isDirectory: boolean;
+        if (kindHint === "folder") {
+          isDirectory = true;
+        } else if (kindHint === "file") {
+          isDirectory = false;
+        } else if (isAbsoluteFilePath(path)) {
+          try {
+            isDirectory = await invoke<boolean>("path_is_directory", { path });
+          } catch {
+            isDirectory = false;
+          }
+        } else {
+          isDirectory = false;
+        }
+        setAttachments((prev) => [...prev, { path, name, isDirectory }]);
+      };
+
+      const custom = dt.getData(AWENCODE_FILE_PATH_MIME);
+      if (custom) {
+        const hint =
+          treeKind === "folder" ? "folder" : treeKind === "file" ? "file" : undefined;
+        await pushPath(custom, hint);
+      }
+
+      const uriList = dt.getData("text/uri-list");
+      if (uriList) {
+        for (const p of filePathsFromUriList(uriList)) {
+          await pushPath(p, undefined);
+        }
+      }
+
+      const plain = dt.getData("text/plain").trim();
+      if (plain && isAbsoluteFilePath(plain)) {
+        await pushPath(plain, undefined);
+      }
+
+      const dropped = Array.from(dt.files ?? []);
+      if (dropped.length > 0 && seenPaths.size === 0) {
+        addFilesFromList(dropped);
+      }
+    })();
   };
 
   const removeAttachment = (index: number) => {
@@ -126,7 +236,18 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
   const canSend = !disabled && (value.trim().length > 0 || attachments.length > 0);
 
   return (
-    <div className="bg-bg-card rounded-2xl shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+    <div
+      ref={composeRootRef}
+      className={cn(
+        "bg-bg-card rounded-2xl border border-transparent shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-120",
+        dragHighlight &&
+          "border-accent-blue shadow-[0_1px_4px_rgba(0,0,0,0.04),inset_0_0_0_1px_var(--text-links)]",
+      )}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -143,6 +264,8 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
           <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
             {attachments.map((att, i) => {
               const isImage = att.mime?.startsWith("image/");
+              const isFolder = att.isDirectory === true;
+              const setiKey = !isFolder && !isImage ? resolveSetiKey(att.name) : null;
               return (
                 <div
                   key={i}
@@ -156,10 +279,14 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
                     />
                   ) : isImage ? (
                     <Image size={13} className="text-text-faint shrink-0" />
+                  ) : isFolder ? (
+                    <FolderIcon open={false} size={15} />
                   ) : (
-                    <FileText size={13} className="text-text-faint shrink-0" />
+                    <SetiIcon iconKey={setiKey!} isDark={isDark} size={15} />
                   )}
-                  <span className="font-mono text-[10px] text-text-secondary truncate">{att.name}</span>
+                  <span className="font-sans text-[12px] font-normal text-text-secondary truncate">
+                    {att.name}
+                  </span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(i)}
@@ -188,6 +315,7 @@ export function ComposeArea({ onSend, disabled, emptyThread = false }: ComposeAr
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
+            onDragOver={handleDragOver}
             placeholder=" "
             disabled={disabled}
             rows={1}

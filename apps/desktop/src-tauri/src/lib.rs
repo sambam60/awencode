@@ -2,6 +2,7 @@ mod codex_bridge;
 
 use base64::Engine;
 use codex_bridge::CodexBridge;
+use std::path::Path;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -67,6 +68,19 @@ async fn codex_set_api_keys(
     let azure = (!azure_api_key.trim().is_empty()).then_some(azure_api_key);
     bridge.set_api_keys(openai, openrouter, azure);
     bridge.restart(&app).await
+}
+
+/// Whether `path` exists on disk and is a directory (false if missing or inaccessible).
+#[tauri::command]
+fn path_is_directory(path: String) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    Path::new(path)
+        .metadata()
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
 }
 
 /// Open a URL in the default browser.
@@ -668,6 +682,7 @@ pub fn run() {
             open_url,
             get_git_info,
             get_git_file_status,
+            path_is_directory,
             list_directory_tree,
             git_commit,
             git_push,
