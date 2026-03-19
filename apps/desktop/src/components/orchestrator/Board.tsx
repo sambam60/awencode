@@ -7,6 +7,7 @@ import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { STATUS_CONFIG } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { invoke } from "@tauri-apps/api/core";
 
 const ALL_COLUMNS = ["queued", "active", "review", "deployed"] as const;
 
@@ -36,12 +37,27 @@ export function Orchestrator() {
 
   const selected = agents.find((a) => a.id === selectedId) ?? null;
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     const id = `agent-${Date.now()}`;
+    // Resolve real git branch before creating the agent
+    let branch = "";
+    let originUrl: string | undefined;
+    const projectPath = useAppStore.getState().projectPath;
+    if (projectPath) {
+      try {
+        const info = await invoke<{ branch?: string | null; originUrl?: string | null }>("get_git_info", {
+          path: projectPath,
+        });
+        branch = info?.branch ?? "";
+        originUrl = info?.originUrl ?? undefined;
+      } catch {
+        // ignore — branch stays empty
+      }
+    }
     addAgent({
       id,
       title: "New thread",
-      branch: "feat/new-thread",
+      branch,
       status: "active",
       lastAction: "Waiting for your first message",
       progress: 0,
@@ -51,6 +67,7 @@ export function Orchestrator() {
       pr: null,
       messages: [],
       blocked: false,
+      originUrl,
     });
     setView("chat");
   };

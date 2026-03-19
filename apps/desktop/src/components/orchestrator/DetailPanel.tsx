@@ -1,7 +1,7 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/status";
-import type { Agent } from "@/lib/stores/thread-store";
+import type { Agent, PrStatus } from "@/lib/stores/thread-store";
 
 interface DetailPanelProps {
   agent: Agent;
@@ -17,6 +17,142 @@ function StatCard({ label, value }: { label: string; value: string }) {
     <div className="bg-bg-card border border-border-light rounded px-3 py-2.5">
       <div className="label-mono mb-1">{label}</div>
       <div className="text-lg font-medium text-text-primary">{value}</div>
+    </div>
+  );
+}
+
+function PrStatusRow({
+  icon,
+  label,
+  action,
+  iconColor,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  action?: React.ReactNode;
+  iconColor?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 py-2.5 border-b border-border-light last:border-b-0">
+      <span className={cn("shrink-0", iconColor)}>{icon}</span>
+      <span className="flex-1 text-[12.5px] text-text-primary">{label}</span>
+      {action && <span className="shrink-0">{action}</span>}
+    </div>
+  );
+}
+
+function PrStatusCard({ prStatus, prUrl }: { prStatus: PrStatus; prUrl: string | null }) {
+  const checksIcon =
+    prStatus.checksState === "success" ? (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6.5" stroke="#3a9d63" />
+        <path d="M4 7l2 2 4-4" stroke="#3a9d63" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ) : prStatus.checksState === "failure" ? (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6.5" stroke="#c0392b" />
+        <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke="#c0392b" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ) : prStatus.checksState === "pending" ? (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" />
+        <circle cx="7" cy="7" r="2" fill="#9b9ea4" />
+      </svg>
+    ) : (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" strokeDasharray="2 2" />
+      </svg>
+    );
+
+  const checksLabel =
+    prStatus.checksState === "success"
+      ? "Checks successful"
+      : prStatus.checksState === "failure"
+        ? "Checks failing"
+        : prStatus.checksState === "pending"
+          ? "Checks running"
+          : "No checks";
+
+  const approvalsIcon = (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" />
+      <path d="M4.5 7.5a2 2 0 1 1 4 0" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
+      <circle cx="7" cy="5" r="1.2" fill="#9b9ea4" />
+    </svg>
+  );
+
+  const commentsIcon = (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <rect x="1.5" y="2.5" width="11" height="8" rx="1.5" stroke="#9b9ea4" strokeWidth="1.2" />
+      <path d="M4 9.5l1.5 2" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M4 6h6M4 8h4" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+
+  const mergeIcon = (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M3 3v8M11 5v6M3 11a2 2 0 0 0 4 0M3 3a2 2 0 0 1 4 0v2a2 2 0 0 0 4 0" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+
+  return (
+    <div className="border border-border-light rounded-lg overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border-light bg-bg-secondary">
+        <img src="/octicon.svg" alt="" className="w-3 h-3 opacity-40 dark:invert shrink-0" />
+        <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">PR status</span>
+        {prUrl && (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto font-mono text-[9.5px] text-text-faint hover:text-text-secondary transition-colors duration-120"
+            onClick={(e) => { e.stopPropagation(); }}
+          >
+            {prStatus.prNumber ? `#${prStatus.prNumber}` : "view ↗"}
+          </a>
+        )}
+      </div>
+      <div className="px-3 divide-y divide-border-light">
+        <PrStatusRow icon={checksIcon} label={checksLabel} />
+        <PrStatusRow
+          icon={approvalsIcon}
+          label={prStatus.approvals === 0 ? "No approvals yet" : `${prStatus.approvals} approval${prStatus.approvals === 1 ? "" : "s"}`}
+        />
+        {prStatus.comments > 0 && (
+          <PrStatusRow
+            icon={commentsIcon}
+            label={`${prStatus.comments} comment${prStatus.comments === 1 ? "" : "s"}`}
+            action={
+              prUrl ? (
+                <a
+                  href={prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-2 py-0.5 text-[10.5px] text-text-secondary border border-border-default rounded hover:bg-bg-secondary transition-colors duration-120 font-sans"
+                >
+                  Address all
+                </a>
+              ) : undefined
+            }
+          />
+        )}
+        <PrStatusRow
+          icon={mergeIcon}
+          label={prStatus.mergeable ? "Ready to merge" : "Not ready to merge"}
+          action={
+            prStatus.mergeable && prUrl ? (
+              <a
+                href={prUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-2 py-0.5 text-[10.5px] text-text-secondary border border-border-default rounded hover:bg-bg-secondary transition-colors duration-120 font-sans"
+              >
+                Merge
+              </a>
+            ) : undefined
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -76,9 +212,9 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             ×
           </button>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <span
-            className="inline-block w-1.5 h-1.5 rounded-full"
+            className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
             style={{ background: accent }}
           />
           <span
@@ -87,9 +223,29 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
           >
             {agent.blocked ? "Blocked" : agent.status}
           </span>
-          <span className="font-mono text-xs text-text-faint">
+          <span className="font-mono text-[10px] text-text-faint flex items-center gap-1">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+              <path fillRule="evenodd" d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zm-2.25.75a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.492 2.492 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25zM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM4.25 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5z" />
+            </svg>
             {agent.branch}
           </span>
+          {agent.originUrl && (() => {
+            const m = agent.originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+            if (!m) return null;
+            const repoUrl = `https://github.com/${m[1]}`;
+            return (
+              <a
+                href={repoUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 font-mono text-[10px] text-text-faint hover:text-text-secondary transition-colors duration-120"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <img src="/octicon.svg" alt="" className="w-2.5 h-2.5 opacity-35 dark:invert shrink-0" />
+                <span>{m[1]}</span>
+              </a>
+            );
+          })()}
         </div>
       </div>
 
@@ -122,6 +278,42 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               <StatCard label="Files" value={`${agent.files.length}`} />
               <StatCard label="Progress" value={`${agent.progress}%`} />
             </div>
+
+            {/* PR status from GitHub */}
+            {agent.prStatus && (
+              <PrStatusCard
+                prStatus={agent.prStatus}
+                prUrl={agent.prStatus.prUrl}
+              />
+            )}
+
+            {/* Placeholder when there's a PR number but no fetched status yet */}
+            {!agent.prStatus && agent.pr && agent.originUrl && (() => {
+              const m = agent.originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+              if (!m) return null;
+              const prNum = agent.pr.replace("#", "");
+              const prUrl = `https://github.com/${m[1]}/pull/${prNum}`;
+              return (
+                <div className="border border-border-light rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-border-light bg-bg-secondary">
+                    <img src="/octicon.svg" alt="" className="w-3 h-3 opacity-40 dark:invert shrink-0" />
+                    <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">PR status</span>
+                    <a
+                      href={prUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto font-mono text-[9.5px] text-text-faint hover:text-text-secondary transition-colors duration-120"
+                    >
+                      {agent.pr} ↗
+                    </a>
+                  </div>
+                  <div className="px-3 py-3 text-center">
+                    <span className="font-mono text-[10.5px] text-text-faint">connect GitHub token to see status</span>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="flex gap-2 flex-wrap">
               {agent.status === "review" && (
                 <>

@@ -30,6 +30,21 @@ export interface Agent {
   streamingBuffer?: string;
   /** True while a turn is in progress (waiting for turn/completed). */
   turnInProgress?: boolean;
+  /** GitHub origin URL parsed from git remote. */
+  originUrl?: string | null;
+  /** Short SHA of the HEAD commit when this thread was opened. */
+  sha?: string | null;
+  /** GitHub PR status details fetched from the API. */
+  prStatus?: PrStatus | null;
+}
+
+export interface PrStatus {
+  checksState: "success" | "failure" | "pending" | "none";
+  approvals: number;
+  comments: number;
+  mergeable: boolean;
+  prNumber: number | null;
+  prUrl: string | null;
 }
 
 interface ThreadState {
@@ -44,6 +59,8 @@ interface ThreadState {
   flushAgentStreamingBuffer: (agentId: string) => void;
   setAgentTurnInProgress: (agentId: string, value: boolean) => void;
   setAgentStatus: (agentId: string, status: AgentStatus) => void;
+  updateAgentGitInfo: (agentId: string, info: { branch?: string; sha?: string; originUrl?: string }) => void;
+  updateAgentPrStatus: (agentId: string, prStatus: PrStatus | null) => void;
 }
 
 export const useThreadStore = create<ThreadState>((set) => ({
@@ -104,6 +121,27 @@ export const useThreadStore = create<ThreadState>((set) => ({
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId ? { ...a, status } : a,
+      ),
+    })),
+
+  updateAgentGitInfo: (agentId, info) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              ...(info.branch !== undefined && { branch: info.branch }),
+              ...(info.sha !== undefined && { sha: info.sha }),
+              ...(info.originUrl !== undefined && { originUrl: info.originUrl }),
+            }
+          : a,
+      ),
+    })),
+
+  updateAgentPrStatus: (agentId, prStatus) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, prStatus } : a,
       ),
     })),
 }));

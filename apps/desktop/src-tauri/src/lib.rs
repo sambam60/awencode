@@ -437,6 +437,33 @@ async fn git_push(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Create and checkout a new git branch at `path`.
+#[tauri::command]
+async fn git_create_branch(path: String, name: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Branch name is required".to_string());
+    }
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["checkout", "-b", &name])
+            .current_dir(&path)
+            .output()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git checkout -b failed: {stderr}"));
+    }
+    Ok(())
+}
+
 /// Clone a git repo at `url` into `parent_dir`. Returns the full path of the cloned directory.
 #[tauri::command]
 async fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
@@ -498,6 +525,7 @@ pub fn run() {
             rpc_notify,
             codex_set_api_keys,
             git_clone,
+            git_create_branch,
             open_in_app,
             detect_open_apps,
             resolve_app_icon,

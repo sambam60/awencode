@@ -12,6 +12,7 @@ import {
   FolderOpen,
   ArrowUpDown,
   MessageSquare,
+  GitFork,
 } from "lucide-react";
 import { ComposeArea, type Attachment } from "./ComposeArea";
 import { statusColor } from "@/lib/status";
@@ -114,15 +115,19 @@ function GitButton({
   projectPath,
   branch,
   onGitAction,
+  onBranchCreated,
 }: {
   pr: string | null;
   projectPath: string | null;
   branch: string;
   onGitAction: () => void;
+  onBranchCreated?: (branch: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
+  const [createBranchOpen, setCreateBranchOpen] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
   const [gitError, setGitError] = useState<string | null>(null);
 
   const handleCommit = async () => {
@@ -172,6 +177,20 @@ function GitButton({
     }
   };
 
+  const handleCreateBranch = async () => {
+    if (!projectPath || !newBranchName.trim()) return;
+    setGitError(null);
+    try {
+      await invoke("git_create_branch", { path: projectPath, name: newBranchName.trim() });
+      onBranchCreated?.(newBranchName.trim());
+      setCreateBranchOpen(false);
+      setNewBranchName("");
+      onGitAction();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="relative">
       <button
@@ -190,6 +209,25 @@ function GitButton({
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-card border border-border-default rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.06)] z-50 overflow-hidden py-1">
+          {/* Branch info header */}
+          <div className="px-3 py-2 border-b border-border-light">
+            <div className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest mb-0.5">current branch</div>
+            <div className="flex items-center gap-1.5">
+              <GitBranch size={10} className="text-text-tertiary shrink-0" />
+              <span className="font-mono text-[11px] text-text-primary truncate">{branch || "—"}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setOpen(false);
+              setCreateBranchOpen(true);
+              setGitError(null);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
+          >
+            <GitFork size={12} className="text-text-faint shrink-0" />
+            <span className="text-[12px] text-text-primary">Create branch</span>
+          </button>
           <button
             onClick={() => {
               setOpen(false);
@@ -208,15 +246,51 @@ function GitButton({
             <CloudUpload size={12} className="text-text-faint shrink-0" />
             <span className="text-[12px] text-text-primary">Push</span>
           </button>
+          <div className="border-t border-border-light my-1" />
           <button
             onClick={handleCreatePR}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer text-left"
           >
-            <GitPullRequest size={12} className="text-text-faint shrink-0" />
-            <span className="text-[12px] text-text-primary">Create PR</span>
+            <img src="/octicon.svg" alt="" className="w-3 h-3 shrink-0 opacity-40 dark:invert" />
+            <span className="text-[12px] text-text-primary">Open PR on GitHub</span>
           </button>
         </div>
       )}
+      {/* Create branch modal */}
+      {createBranchOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCreateBranchOpen(false)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-default bg-bg-card p-4 shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
+            <div className="font-mono text-[10px] text-text-faint uppercase tracking-widest mb-2">
+              New branch name
+            </div>
+            <input
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateBranch()}
+              placeholder="feat/my-feature"
+              className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3 font-mono"
+            />
+            {gitError && <p className="text-[11px] text-accent-red mb-2">{gitError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setCreateBranchOpen(false)}
+                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateBranch}
+                disabled={!newBranchName.trim()}
+                className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 disabled:opacity-50"
+              >
+                Create branch
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      {/* Commit modal */}
       {commitOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCommitOpen(false)} />
@@ -227,6 +301,7 @@ function GitButton({
             <input
               value={commitMessage}
               onChange={(e) => setCommitMessage(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCommit()}
               placeholder="Describe your changes..."
               className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
             />
@@ -332,6 +407,10 @@ function OpenInButton() {
     }
   };
 
+  const firstApp = displayApps[0];
+  const triggerIconUrl = firstApp ? appIcons[firstApp.id] : undefined;
+  const TriggerIcon = firstApp ? (APP_ICON_MAP[firstApp.id.toLowerCase()] ?? Box) : Box;
+
   return (
     <div className="relative">
       <button
@@ -339,7 +418,11 @@ function OpenInButton() {
         className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-border-default text-text-secondary bg-bg-secondary hover:bg-bg-card text-[11px] font-mono transition-colors duration-120 cursor-pointer"
         aria-label="Open in"
       >
-        <Box size={12} />
+        {triggerIconUrl ? (
+          <img src={triggerIconUrl} alt="" className="w-4 h-4 rounded-[2px] shrink-0 object-contain" />
+        ) : (
+          <TriggerIcon size={12} className="shrink-0" />
+        )}
         <ChevronDown size={9} />
       </button>
       {open && (
@@ -423,14 +506,22 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const projectPath = useAppStore((s) => s.projectPath);
   const setAgentCodexThreadId = useThreadStore((s) => s.setAgentCodexThreadId);
   const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
+  const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
 
   useEffect(() => {
-    if (!agent.codexThreadId || !projectPath) return;
+    if (!projectPath) return;
     invoke<{ branch?: string | null; sha?: string | null; originUrl?: string | null }>("get_git_info", {
       path: projectPath,
     })
       .then((info) => {
         if (!info?.branch && !info?.sha && !info?.originUrl) return;
+        // Update the agent's git info in the store so the UI reflects real data
+        updateAgentGitInfo(agent.id, {
+          branch: info.branch ?? undefined,
+          sha: info.sha ?? undefined,
+          originUrl: info.originUrl ?? undefined,
+        });
+        if (!agent.codexThreadId) return;
         return rpcRequest("thread/metadata/update", {
           threadId: agent.codexThreadId,
           gitInfo: {
@@ -441,7 +532,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         });
       })
       .catch(() => {});
-  }, [agent.codexThreadId, agent.id, projectPath]);
+  }, [agent.id, agent.codexThreadId, projectPath, updateAgentGitInfo]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -540,7 +631,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         {/* Divider */}
         <div className="h-4 w-px bg-border-light shrink-0" />
 
-        {/* Status dot + title + branch */}
+        {/* Status dot + title */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span
             className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
@@ -548,9 +639,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           />
           <span className="text-[13px] font-medium text-text-primary tracking-[-0.01em] truncate">
             {agent.title}
-          </span>
-          <span className="font-mono text-[10px] text-text-faint shrink-0 bg-bg-secondary border border-border-light rounded px-1.5 py-0.5 leading-none">
-            {agent.branch}
           </span>
         </div>
 
@@ -593,6 +681,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             projectPath={projectPath}
             branch={agent.branch}
             onGitAction={() => {}}
+            onBranchCreated={(b) => updateAgentGitInfo(agent.id, { branch: b })}
           />
         </div>
       </div>
