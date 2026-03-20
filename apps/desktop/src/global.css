@@ -215,7 +215,7 @@
   }
 
   .dark .glass-overlay {
-    background: rgba(23, 23, 26, 0.56);
+    background: rgba(29, 29, 33, 0.56);
     border: 1px solid rgba(255, 255, 255, 0.06);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   }
@@ -251,7 +251,7 @@
   }
 
   .glass-menu-row-active {
-    background-color: rgba(100, 100, 100, 0.12);
+    background-color: rgba(100  , 100, 100, 0.12);
   }
 
   .dark .glass-menu-row-active {

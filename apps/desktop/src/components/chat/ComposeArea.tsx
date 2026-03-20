@@ -34,6 +34,11 @@ export interface Attachment {
   isDirectory?: boolean;
 }
 
+export interface PromptEditTarget {
+  messageIndex: number;
+  seedText: string;
+}
+
 interface ComposeAreaProps {
   onSend: (message: string, attachments: Attachment[]) => void;
   disabled?: boolean;
@@ -43,6 +48,12 @@ interface ComposeAreaProps {
   agentId: string;
   /** Persist prompt text for Queue threads (survives leaving chat / app restart for this project). */
   persistQueuedDraft?: boolean;
+  /** When set, Send opens the edit confirmation flow instead of a normal turn. */
+  promptEditTarget?: PromptEditTarget | null;
+  onPromptEditSubmit?: (message: string, attachments: Attachment[]) => void;
+  onCancelPromptEdit?: () => void;
+  /** `thread` = inline in transcript (morphs from bubble radius into compose card). */
+  placement?: "dock" | "thread";
 }
 
 const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
@@ -138,22 +149,28 @@ export function ComposeArea({
   emptyThread = false,
   agentId,
   persistQueuedDraft = false,
+  promptEditTarget = null,
+  onPromptEditSubmit,
+  onCancelPromptEdit,
+  placement = "dock",
 }: ComposeAreaProps) {
   const setComposeDraft = useChatUiStore((s) => s.setComposeDraft);
   const [value, setValue] = useState(() =>
-    persistQueuedDraft
-      ? (useChatUiStore.getState().composeDraftByAgentId[agentId] ?? "")
-      : "",
+    placement === "thread"
+      ? ""
+      : persistQueuedDraft
+        ? (useChatUiStore.getState().composeDraftByAgentId[agentId] ?? "")
+        : "",
   );
 
   const syncValue = useCallback(
     (next: string) => {
       setValue(next);
-      if (persistQueuedDraft) {
+      if (persistQueuedDraft && placement === "dock") {
         setComposeDraft(agentId, next);
       }
     },
-    [persistQueuedDraft, agentId, setComposeDraft],
+    [persistQueuedDraft, placement, agentId, setComposeDraft],
   );
   const [modelOpen, setModelOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
@@ -197,13 +214,17 @@ export function ComposeArea({
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed && attachments.length === 0) return;
+    if (promptEditTarget && onPromptEditSubmit) {
+      onPromptEditSubmit(trimmed, attachments);
+      return;
+    }
     onSend(trimmed, attachments);
     setValue("");
     setAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, attachments, onSend]);
+  }, [value, attachments, onSend, promptEditTarget, onPromptEditSubmit]);
 
   const addFilesFromList = useCallback((files: File[]) => {
     files.forEach((file) => {
@@ -351,7 +372,34 @@ export function ComposeArea({
 
   // Expand only after enough content — 30 chars of text OR any attachment
   const EXPAND_THRESHOLD = 30;
-  const isExpanded = value.length >= EXPAND_THRESHOLD || attachments.length > 0;
+  const isExpanded =
+    placement === "thread" ||
+    value.length >= EXPAND_THRESHOLD ||
+    attachments.length > 0;
+
+  const editIndex = promptEditTarget?.messageIndex;
+  const editSeed = promptEditTarget?.seedText;
+  useLayoutEffect(() => {
+    if (editIndex === undefined || editSeed === undefined) return;
+    syncValue(editSeed);
+    setAttachments([]);
+  }, [editIndex, editSeed, syncValue]);
+
+  const [threadMorphOpen, setThreadMorphOpen] = useState(false);
+  useLayoutEffect(() => {
+    if (placement !== "thread") return;
+    setThreadMorphOpen(false);
+    let cancelled = false;
+    const outer = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!cancelled) setThreadMorphOpen(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(outer);
+    };
+  }, [placement, promptEditTarget?.messageIndex, promptEditTarget?.seedText]);
 
   // When transitioning into expanded state, resize the textarea to fit existing content
   useLayoutEffect(() => {
@@ -362,15 +410,22 @@ export function ComposeArea({
     }
   }, [isExpanded]);
 
-  // Smoothly interpolate border-radius: pill (9999px) → card (16px)
-  // Use inline style so CSS can actually transition the numeric value
-  const borderRadius = isExpanded ? "16px" : "9999px";
+  // Dock: pill → card. Thread: bubble-like → card (morph in transcript).
+  const borderRadius =
+    placement === "thread"
+      ? threadMorphOpen
+        ? "10px"
+        : "16px"
+      : isExpanded
+        ? "10px"
+        : "9999px";
 
   return (
     <div
       ref={composeRootRef}
       className={cn(
         "overflow-hidden bg-bg-card border border-border-default shadow-[0_1px_4px_rgba(0,0,0,0.04)]",
+        placement === "thread" && "w-full max-w-full min-w-0",
         dragHighlight && "border-accent-blue shadow-[inset_0_0_0_1px_var(--accent-blue)]",
       )}
       style={{
@@ -385,6 +440,20 @@ export function ComposeArea({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {promptEditTarget && onCancelPromptEdit && placement === "dock" ? (
+        <div className="flex items-center justify-between gap-2 px-4 pt-2.5 pb-1">
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-text-tertiary">
+            Editing earlier message
+          </span>
+          <button
+            type="button"
+            onClick={onCancelPromptEdit}
+            className="font-sans text-[11.5px] text-text-secondary hover:text-text-primary transition-colors duration-120 cursor-pointer shrink-0"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -473,6 +542,17 @@ export function ComposeArea({
 
       {/* Single-row pill bar — always visible */}
       <div className="flex items-center gap-1 px-2 py-2">
+        {placement === "thread" && onCancelPromptEdit ? (
+          <button
+            type="button"
+            onClick={onCancelPromptEdit}
+            className="flex items-center justify-center w-7 h-7 text-text-tertiary hover:text-text-secondary rounded-full transition-colors duration-120 cursor-pointer shrink-0"
+            aria-label="Cancel editing"
+            title="Cancel"
+          >
+            <X size={15} strokeWidth={1.5} />
+          </button>
+        ) : null}
         {/* + button */}
         <button
           type="button"

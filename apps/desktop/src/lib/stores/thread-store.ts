@@ -139,6 +139,10 @@ interface ThreadState {
   setAgentCurrentTurnId: (agentId: string, turnId: string | null) => void;
   addAgentModel: (agentId: string, model: string) => void;
   removeAgent: (agentId: string) => void;
+  /** Drop messages from `fromIndex` onward and reset in-flight UI state (prompt edit / rollback). */
+  truncateAgentMessagesFrom: (agentId: string, fromIndex: number) => void;
+  /** In-place user message text only — does not call the model. */
+  replaceUserMessageContent: (agentId: string, index: number, content: string) => void;
 }
 
 function progressFromPlanSteps(steps: AgentPlanStep[]): number {
@@ -386,5 +390,37 @@ export const useThreadStore = create<ThreadState>((set) => ({
     set((s) => ({
       agents: s.agents.filter((a) => a.id !== agentId),
       selectedAgentId: s.selectedAgentId === agentId ? null : s.selectedAgentId,
+    })),
+
+  truncateAgentMessagesFrom: (agentId, fromIndex) =>
+    set((s) => ({
+      agents: s.agents.map((a) => {
+        if (a.id !== agentId) return a;
+        const nextMessages =
+          fromIndex <= 0 ? [] : a.messages.slice(0, fromIndex);
+        return {
+          ...a,
+          messages: nextMessages,
+          activities: [],
+          streamingBuffer: "",
+          turnInProgress: false,
+          currentTurnId: null,
+          pendingApproval: null,
+          planSteps: [],
+        };
+      }),
+    })),
+
+  replaceUserMessageContent: (agentId, index, content) =>
+    set((s) => ({
+      agents: s.agents.map((a) => {
+        if (a.id !== agentId) return a;
+        const msg = a.messages[index];
+        if (!msg || msg.role !== "you") return a;
+        const messages = a.messages.map((m, i) =>
+          i === index ? { ...m, content } : m,
+        );
+        return { ...a, messages };
+      }),
     })),
 }));

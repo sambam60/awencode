@@ -22,6 +22,7 @@ import {
   Copy,
   Check,
   FolderTree,
+  Undo2,
 } from "lucide-react";
 import { ComposeArea, type Attachment } from "./ComposeArea";
 import { CodeBlock } from "./CodeBlock";
@@ -37,6 +38,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { rpcRequest, rpcRespond } from "@/lib/rpc-client";
 import { interruptTurn } from "@/lib/codex-turn";
 import { sendChatTurn } from "@/lib/send-chat-turn";
+import { submitPromptEditRevert } from "@/lib/submit-prompt-edit";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import { useViewStore } from "@/lib/stores/view-store";
@@ -351,11 +353,15 @@ function AgentMarkdown({ content, streaming = false }: { content: string; stream
   const parsed = parseContent(content);
 
   if (parsed.length === 0) {
-    return <p className="text-[13px] font-sans text-text-primary leading-relaxed">{content}</p>;
+    return (
+      <p className="text-[13px] font-sans text-text-primary leading-relaxed min-w-0 [overflow-wrap:anywhere]">
+        {content}
+      </p>
+    );
   }
 
   return (
-    <div className="font-sans">
+    <div className="font-sans min-w-0 [overflow-wrap:anywhere]">
       {parsed.map(({ key, node }) => {
         if (!streaming) return <React.Fragment key={key}>{node}</React.Fragment>;
 
@@ -373,7 +379,17 @@ function AgentMarkdown({ content, streaming = false }: { content: string; stream
 
 // ─── Message row ──────────────────────────────────────────────────────────────
 
-function MessageRow({ message }: { message: AgentMessage }) {
+function MessageRow({
+  message,
+  messageIndex,
+  onEditPrompt,
+  promptEditEnabled,
+}: {
+  message: AgentMessage;
+  messageIndex: number;
+  onEditPrompt?: (messageIndex: number, text: string) => void;
+  promptEditEnabled?: boolean;
+}) {
   const isUser = message.role === "you";
   const [copied, setCopied] = useState(false);
   const copiedTimeoutRef = useRef<number | null>(null);
@@ -389,8 +405,8 @@ function MessageRow({ message }: { message: AgentMessage }) {
 
   if (isUser) {
     return (
-      <div className="flex justify-end mb-5">
-        <div className="max-w-[80%] flex flex-col gap-2 items-end">
+      <div className="flex justify-end mb-5 min-w-0">
+        <div className="w-fit max-w-[80%] min-w-0 flex flex-col gap-2 items-end">
           {message.imageUrls && message.imageUrls.length > 0 && (
             <div className="flex flex-wrap gap-2 justify-end">
               {message.imageUrls.map((url, i) => (
@@ -404,8 +420,19 @@ function MessageRow({ message }: { message: AgentMessage }) {
             </div>
           )}
           {message.content && (
-            <div className="px-4 py-3 bg-text-primary text-bg-card rounded-full text-[13px] leading-relaxed whitespace-pre-wrap">
-              {message.content}
+            <div className="min-w-0 max-w-full flex items-start gap-2 px-4 py-3 bg-text-primary text-bg-card rounded-[16px] text-[13px] leading-relaxed whitespace-pre-wrap text-left [overflow-wrap:anywhere]">
+              <span className="min-w-0 flex-1">{message.content}</span>
+              {onEditPrompt && promptEditEnabled ? (
+                <button
+                  type="button"
+                  onClick={() => onEditPrompt(messageIndex, message.content)}
+                  className="shrink-0 mt-0.5 p-1 rounded-md text-bg-card/55 hover:text-bg-card transition-colors duration-120 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
+                  title="Edit prompt"
+                  aria-label="Edit prompt"
+                >
+                  <Undo2 size={14} strokeWidth={2} />
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -425,7 +452,7 @@ function MessageRow({ message }: { message: AgentMessage }) {
   }
 
   return (
-    <div className="mb-5 group/response">
+    <div className="mb-5 group/response min-w-0">
       <AgentMarkdown content={message.content} />
       <button
         type="button"
@@ -466,7 +493,7 @@ function MessageRow({ message }: { message: AgentMessage }) {
 
 function StreamingMessage({ buffer }: { buffer: string }) {
   return (
-    <div className="mb-5">
+    <div className="mb-5 min-w-0">
       <AgentMarkdown content={buffer} streaming />
       <span className="inline-block w-[2px] h-[14px] ml-0.5 bg-text-faint align-middle animate-cursor-blink" />
     </div>
@@ -1104,6 +1131,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const addAgent = useThreadStore((s) => s.addAgent);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
+  const replaceUserMessageContent = useThreadStore((s) => s.replaceUserMessageContent);
 
   const clearApproval = useCallback(() => {
     setAgentPendingApproval(agent.id, null);
@@ -1152,6 +1180,18 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   );
 
   const [stopping, setStopping] = useState(false);
+  const [promptEdit, setPromptEdit] = useState<{
+    messageIndex: number;
+    seedText: string;
+  } | null>(null);
+  const [editConfirm, setEditConfirm] = useState<{
+    messageIndex: number;
+    text: string;
+    attachments: Attachment[];
+  } | null>(null);
+  const [composeSessionKey, setComposeSessionKey] = useState(0);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+
   const fileTreeOpen = useChatUiStore(
     (s) => s.fileTreeOpenByAgentId[agent.id] ?? false,
   );
@@ -1222,6 +1262,83 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   }, [agent.pendingApproval, clearApproval]);
 
   const canCompose = agent.status !== "deployed";
+  const setComposeDraft = useChatUiStore((s) => s.setComposeDraft);
+
+  useEffect(() => {
+    setPromptEdit(null);
+    setEditConfirm(null);
+  }, [agent.id]);
+
+  const promptEditEnabled = canCompose && !agent.turnInProgress;
+
+  const handleBeginPromptEdit = useCallback(
+    (messageIndex: number, text: string) => {
+      setPromptEdit({ messageIndex, seedText: text });
+    },
+    [],
+  );
+
+  const handleCancelPromptEdit = useCallback(() => {
+    setPromptEdit(null);
+    setEditConfirm(null);
+    setComposeSessionKey((k) => k + 1);
+    if (agent.status === "queued") {
+      setComposeDraft(agent.id, "");
+    }
+  }, [agent.id, agent.status, setComposeDraft]);
+
+  const handlePromptEditSubmit = useCallback(
+    (text: string, attachments: Attachment[]) => {
+      setPromptEdit((pe) => {
+        if (!pe) return pe;
+        setEditConfirm({
+          messageIndex: pe.messageIndex,
+          text,
+          attachments,
+        });
+        return pe;
+      });
+    },
+    [],
+  );
+
+  const applyEditKeep = useCallback(() => {
+    if (!editConfirm) return;
+    replaceUserMessageContent(agent.id, editConfirm.messageIndex, editConfirm.text);
+    setEditConfirm(null);
+    setPromptEdit(null);
+    setComposeSessionKey((k) => k + 1);
+    setComposeDraft(agent.id, "");
+  }, [agent.id, editConfirm, replaceUserMessageContent, setComposeDraft]);
+
+  const applyEditRevert = useCallback(async () => {
+    if (!editConfirm) return;
+    setEditSubmitting(true);
+    try {
+      await submitPromptEditRevert(
+        agent.id,
+        editConfirm.messageIndex,
+        editConfirm.text,
+        editConfirm.attachments,
+      );
+      setEditConfirm(null);
+      setPromptEdit(null);
+      setComposeSessionKey((k) => k + 1);
+    } finally {
+      setEditSubmitting(false);
+    }
+  }, [agent.id, editConfirm]);
+
+  useEffect(() => {
+    if (!editConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setEditConfirm(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editConfirm]);
 
   const isThinking =
     agent.turnInProgress &&
@@ -1244,6 +1361,19 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     (isReview && agent.files.length > 0);
 
   const projectName = projectPath?.split("/").pop() ?? "";
+
+  const threadEditSlotRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!promptEdit) return;
+    const id = requestAnimationFrame(() => {
+      threadEditSlotRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [promptEdit]);
 
   const handleNewChat = useCallback(async () => {
     const id = `agent-${Date.now()}`;
@@ -1279,6 +1409,45 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     });
     setView("chat");
   }, [addAgent, setView]);
+
+  const renderMessageSlot = (msg: AgentMessage, index: number) => {
+    if (
+      msg.role === "you" &&
+      promptEdit &&
+      promptEdit.messageIndex === index &&
+      canCompose &&
+      promptEditEnabled
+    ) {
+      return (
+        <div
+          key={`inline-edit-${index}`}
+          ref={threadEditSlotRef}
+          className="mb-5 w-full min-w-0"
+        >
+          <ComposeArea
+            placement="thread"
+            key={`${agent.id}-${composeSessionKey}-thread`}
+            agentId={agent.id}
+            persistQueuedDraft={false}
+            onSend={handleSend}
+            emptyThread={false}
+            promptEditTarget={promptEdit}
+            onPromptEditSubmit={handlePromptEditSubmit}
+            onCancelPromptEdit={handleCancelPromptEdit}
+          />
+        </div>
+      );
+    }
+    return (
+      <MessageRow
+        key={index}
+        message={msg}
+        messageIndex={index}
+        onEditPrompt={handleBeginPromptEdit}
+        promptEditEnabled={promptEditEnabled}
+      />
+    );
+  };
 
   return (
     <div className="flex flex-col h-full bg-bg-primary overflow-hidden">
@@ -1487,7 +1656,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
 
       {/* Messages */}
       <div className="relative flex-1 min-h-0">
-        <div ref={scrollRef} className="h-full overflow-y-auto">
+        <div ref={scrollRef} className="h-full min-w-0 overflow-y-auto overflow-x-hidden">
           <div className="max-w-[680px] mx-auto px-6 pt-16 pb-28">
           {agent.messages.length === 0 && !agent.streamingBuffer ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
@@ -1508,22 +1677,18 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               {agent.messages.length > 0 &&
               agent.messages[agent.messages.length - 1]?.role === "agent" ? (
                 <>
-                  {agent.messages.slice(0, -1).map((msg, i) => (
-                    <MessageRow key={i} message={msg} />
-                  ))}
+                  {agent.messages.slice(0, -1).map((msg, i) => renderMessageSlot(msg, i))}
                   {(agent.activities?.length ?? 0) > 0 && (
                     <ActivityFeed activities={agent.activities ?? []} />
                   )}
-                  <MessageRow
-                    key={agent.messages.length - 1}
-                    message={agent.messages[agent.messages.length - 1]!}
-                  />
+                  {renderMessageSlot(
+                    agent.messages[agent.messages.length - 1]!,
+                    agent.messages.length - 1,
+                  )}
                 </>
               ) : (
                 <>
-                  {agent.messages.map((msg, i) => (
-                    <MessageRow key={i} message={msg} />
-                  ))}
+                  {agent.messages.map((msg, i) => renderMessageSlot(msg, i))}
                   {(agent.activities?.length ?? 0) > 0 && (
                     <ActivityFeed activities={agent.activities ?? []} />
                   )}
@@ -1694,9 +1859,10 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           </div>
         )}
 
-        {/* Compose */}
-        {canCompose ? (
+        {/* Compose — dock hidden while editing in-thread (inline compose replaces bubble) */}
+        {canCompose && !promptEdit ? (
           <ComposeArea
+            key={`${agent.id}-${composeSessionKey}`}
             agentId={agent.id}
             persistQueuedDraft={agent.status === "queued"}
             onSend={handleSend}
@@ -1704,18 +1870,79 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               agent.messages.length === 0 && !agent.streamingBuffer
             }
           />
-        ) : (
+        ) : null}
+        {!canCompose ? (
           <div className="border border-border-light rounded-lg px-4 py-3 text-center">
             <span className="font-mono text-[10.5px] text-text-faint">
-              deployed — read only
+              {agent.status === "queued"
+                ? "agent is queued — start it to begin a conversation"
+                : "deployed — read only"}
             </span>
           </div>
-        )}
+        ) : null}
 
       </div>
 
       </div>{/* end chat column */}
       </div>{/* end content area flex-row */}
+
+      {editConfirm ? (
+        <>
+          <div
+            className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
+            onClick={() => setEditConfirm(null)}
+            aria-hidden
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-prompt-dialog-title"
+            className="fixed left-1/2 top-1/2 z-[90] w-[min(400px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-default bg-bg-card p-5 shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.25)]"
+          >
+            <h2
+              id="edit-prompt-dialog-title"
+              className="font-sans text-[14px] font-semibold text-text-primary tracking-[-0.02em] mb-2"
+            >
+              Update this message?
+            </h2>
+            <p className="font-sans text-[12.5px] text-text-secondary leading-relaxed mb-5">
+              <span className="font-medium text-text-primary">Revert</span>{" "}
+              removes everything after this prompt on the thread and sends your
+              edited text again (matches the server via rollback when available).
+            </p>
+            <p className="font-sans text-[12.5px] text-text-secondary leading-relaxed mb-5">
+              <span className="font-medium text-text-primary">Keep</span>{" "}
+              only updates this bubble in the transcript and leaves later
+              messages as they are.
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2">
+              <button
+                type="button"
+                onClick={() => setEditConfirm(null)}
+                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={applyEditKeep}
+                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+              >
+                Keep
+              </button>
+              <button
+                type="button"
+                autoFocus
+                disabled={editSubmitting}
+                onClick={() => void applyEditRevert()}
+                className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 transition-opacity duration-120 cursor-pointer disabled:opacity-50"
+              >
+                {editSubmitting ? "Reverting…" : "Revert"}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
