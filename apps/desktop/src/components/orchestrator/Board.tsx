@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { DetailPanel } from "./DetailPanel";
 import { AgentCard } from "./AgentCard";
 import { CommandBar } from "../command/CommandBar";
@@ -300,10 +301,11 @@ export function Orchestrator() {
       {/* Board + detail panel (panel overlays from right, columns keep fixed width; scroll horizontally if needed) */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Kanban columns — add extra scroll width while keeping content under the overlay */}
-        <div className="flex-1 min-w-0 overflow-x-auto overflow-y-auto">
+        <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-x-auto overflow-y-auto">
+          <LayoutGroup>
           <div
             className={cn(
-              "flex min-w-full gap-0 px-[clamp(12px,2vw,24px)] py-[clamp(12px,2vw,20px)]",
+              "flex min-w-full flex-1 gap-0 px-[clamp(12px,2vw,24px)] py-[clamp(12px,2vw,20px)]",
               selected && "pr-[360px]",
             )}
           >
@@ -397,23 +399,39 @@ export function Orchestrator() {
 
                       {/* Cards */}
                       <div className="flex flex-col gap-2">
+                        <AnimatePresence initial={false} mode="popLayout">
                         {orderedColAgents.map((agent) => (
-                          <AgentCard
+                          <motion.div
                             key={agent.id}
-                            agent={agent}
-                            selected={selectedId === agent.id}
-                            onOpenThread={(id) => {
-                              selectAgent(id);
-                              setView("chat");
+                            layoutId={agent.id}
+                            layout="position"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{
+                              layout: { type: "spring", stiffness: 380, damping: 36, mass: 0.8 },
+                              opacity: { duration: 0.15 },
+                              y: { duration: 0.15 },
+                              scale: { duration: 0.12 },
                             }}
-                            onOpenDetails={selectAgent}
-                            compact={false}
-                          />
+                          >
+                            <AgentCard
+                              agent={agent}
+                              selected={selectedId === agent.id}
+                              onOpenThread={(id) => {
+                                selectAgent(id);
+                                setView("chat");
+                              }}
+                              onOpenDetails={selectAgent}
+                              compact={false}
+                            />
+                          </motion.div>
                         ))}
+                        </AnimatePresence>
                         {colAgents.length === 0 && (
                           <div className="border border-dashed border-border-light rounded-lg p-5 text-center">
-                            <span className="font-mono text-[10px] text-text-faint">
-                              empty
+                            <span className="font-sans text-[12.5px] text-text-faint">
+                              Empty
                             </span>
                           </div>
                         )}
@@ -424,6 +442,7 @@ export function Orchestrator() {
               );
             })}
           </div>
+          </LayoutGroup>
         </div>
 
         {/* Detail panel — overlays from right, glass; covers columns when narrow */}

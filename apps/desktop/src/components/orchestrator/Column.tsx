@@ -54,7 +54,7 @@ export function Column({
           />
         ))}
         {agents.length === 0 && (
-          <div className="p-6 border border-dashed border-border-light rounded-lg text-center font-mono text-xs text-text-faint">
+          <div className="p-6 border border-dashed border-border-light rounded-lg text-center font-sans text-[12.5px] text-text-faint">
             Empty
           </div>
         )}
