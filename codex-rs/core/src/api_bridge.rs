@@ -67,7 +67,27 @@ pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
                         CodexErr::InvalidRequest(body_text)
                     }
                 } else if status == http::StatusCode::INTERNAL_SERVER_ERROR {
-                    CodexErr::InternalServerError
+                    // Surface the provider's actual error body so the user can see
+                    // what went wrong (e.g. OpenRouter's beta Responses API returning
+                    // a descriptive 500 message) rather than the generic "high demand"
+                    // text.  UnexpectedStatus is also retryable, so retry behaviour
+                    // is unchanged.
+                    if !body_text.trim().is_empty() {
+                        CodexErr::UnexpectedStatus(UnexpectedResponseError {
+                            status,
+                            body: body_text,
+                            url,
+                            cf_ray: extract_header(headers.as_ref(), CF_RAY_HEADER),
+                            request_id: extract_request_id(headers.as_ref()),
+                            identity_authorization_error: extract_header(
+                                headers.as_ref(),
+                                X_OPENAI_AUTHORIZATION_ERROR_HEADER,
+                            ),
+                            identity_error_code: extract_x_error_json_code(headers.as_ref()),
+                        })
+                    } else {
+                        CodexErr::InternalServerError
+                    }
                 } else if status == http::StatusCode::TOO_MANY_REQUESTS {
                     if let Ok(err) = serde_json::from_str::<UsageErrorResponse>(&body_text) {
                         if err.error.error_type.as_deref() == Some("usage_limit_reached") {

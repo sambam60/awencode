@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef, memo } from "react";
 import { RefreshCw, ChevronsDownUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AWENCODE_FILE_PATH_MIME, AWENCODE_FILE_KIND_MIME } from "@/lib/dnd";
-import { resolveSetiKey, SetiIcon, FolderIcon } from "@/lib/seti-icons";
+import { resolveSetiKey, SetiIcon } from "@/lib/seti-icons";
 import { useIsDarkMode } from "@/lib/use-is-dark-mode";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -24,6 +24,7 @@ interface FileTreeViewProps {
   projectPath: string | null;
   projectName: string;
   branch: string;
+  width: number;
   open: boolean;
   onClose: () => void;
 }
@@ -405,7 +406,7 @@ const TreeRow = memo(function TreeRow({
         style={{
           minHeight: ROW_HEIGHT,
           paddingLeft,
-          paddingRight: 20,
+          paddingRight: 14,
           overflow: "visible",
         }}
       >
@@ -448,16 +449,14 @@ const TreeRow = memo(function TreeRow({
         </span>
 
         {/* Icon */}
-        <span
-          className="flex items-center justify-center shrink-0"
-          style={{ width: ICON_WIDTH, marginRight: ICON_GAP, overflow: "visible" }}
-        >
-          {entry.isDir ? (
-            <FolderIcon open={isExpanded} size={15} />
-          ) : (
+        {!entry.isDir && (
+          <span
+            className="flex items-center justify-center shrink-0"
+            style={{ width: ICON_WIDTH, marginRight: ICON_GAP, overflow: "visible" }}
+          >
             <SetiIcon iconKey={iconKey!} isDark={isDark} size={15} />
-          )}
-        </span>
+          </span>
+        )}
 
         {/* Label */}
         <span
@@ -514,6 +513,7 @@ export function FileTreeView({
   projectPath,
   projectName,
   branch,
+  width,
   open,
   onClose: _onClose,
 }: FileTreeViewProps) {
@@ -625,23 +625,23 @@ export function FileTreeView({
     <div
       ref={panelRef}
       className="h-full flex flex-col border-r border-border-light select-none"
-      style={{ width: 260, minWidth: 200, maxWidth: 400, background: "var(--bg-secondary)" }}
+      style={{ width, background: "var(--bg-secondary)" }}
     >
       {/* Header */}
-      <div className="h-[22px] shrink-0 flex items-center pl-[20px] pr-[4px] group/header">
+      <div className="h-[22px] shrink-0 flex items-center pl-[16px] pr-[6px] group/header">
         <div className="flex items-center min-w-0 gap-[10px] flex-1">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-text-secondary truncate">
+          <span className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.04em] text-text-secondary truncate">
             {displayName}
           </span>
           {branch && (
-            <div className="flex items-center gap-[8px] shrink-0">
+            <div className="flex min-w-0 flex-1 items-center gap-[8px]">
               <span
                 aria-hidden
-                className="w-[5px] h-[5px] rounded-full"
+                className="w-[5px] h-[5px] shrink-0 rounded-full"
                 style={{ background: "var(--text-tertiary)", opacity: 0.55 }}
               />
               <span
-                className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-tertiary truncate"
+                className="min-w-0 font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-tertiary truncate"
                 title={branch}
               >
                 {branch}
@@ -687,7 +687,6 @@ export function FileTreeView({
             </div>
           ) : tree.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 gap-2">
-              <FolderIcon open={false} size={24} />
               <span className="text-[12px] text-text-faint text-center">
                 No files found.
               </span>
@@ -790,7 +789,7 @@ function StickyFolderRow({
       style={{
         minHeight: ROW_HEIGHT,
         paddingLeft,
-        paddingRight: 20,
+        paddingRight: 14,
         background: "var(--bg-secondary)",
       }}
       onClick={() => onToggleDir(entry.path)}
@@ -826,12 +825,6 @@ function StickyFolderRow({
         >
           <path d="M3 2l4 3-4 3V2z" />
         </svg>
-      </span>
-      <span
-        className="flex items-center justify-center shrink-0"
-        style={{ width: ICON_WIDTH, height: ROW_HEIGHT, marginRight: ICON_GAP }}
-      >
-        <FolderIcon open={isExpanded} size={15} />
       </span>
       <span
         className="text-[13px] truncate flex-1 min-w-0"

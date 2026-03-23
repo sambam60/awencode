@@ -40,6 +40,12 @@ function hydrateAgentFromDisk(a: Agent): Agent {
   };
 }
 
+function shouldPersistQueuedAgent(agent: Agent, composeDraft: string | undefined): boolean {
+  if (agent.status !== "queued") return true;
+  if (agent.messages.length > 0) return true;
+  return (composeDraft ?? "").trim().length > 0;
+}
+
 function buildSnapshot(projectPath: string): ProjectWorkspaceData {
   const { agents, selectedAgentId } = useThreadStore.getState();
   const { collapsedCols } = useBoardUiStore.getState();
@@ -61,12 +67,29 @@ function buildSnapshot(projectPath: string): ProjectWorkspaceData {
     lastView = "orchestrator";
   }
 
+  const persistedAgents = agents.filter((agent) =>
+    shouldPersistQueuedAgent(agent, composeDraftByAgentId[agent.id]),
+  );
+  const persistedAgentIds = new Set(persistedAgents.map((agent) => agent.id));
+  const persistedSelectedAgentId =
+    selectedAgentId && persistedAgentIds.has(selectedAgentId) ? selectedAgentId : null;
+  const persistedFileTreeOpenByAgentId = Object.fromEntries(
+    Object.entries(fileTreeOpenByAgentId).filter(([agentId]) =>
+      persistedAgentIds.has(agentId),
+    ),
+  );
+  const persistedComposeDraftByAgentId = Object.fromEntries(
+    Object.entries(composeDraftByAgentId).filter(([agentId, draft]) =>
+      persistedAgentIds.has(agentId) && draft.trim().length > 0,
+    ),
+  );
+
   return {
-    agents: agents.map(sanitizeAgentForDisk),
-    selectedAgentId,
+    agents: persistedAgents.map(sanitizeAgentForDisk),
+    selectedAgentId: persistedSelectedAgentId,
     boardCollapsedCols: { ...collapsedCols },
-    chatFileTreeOpenByAgentId: { ...fileTreeOpenByAgentId },
-    chatComposeDraftByAgentId: { ...composeDraftByAgentId },
+    chatFileTreeOpenByAgentId: persistedFileTreeOpenByAgentId,
+    chatComposeDraftByAgentId: persistedComposeDraftByAgentId,
     lastView,
   };
 }

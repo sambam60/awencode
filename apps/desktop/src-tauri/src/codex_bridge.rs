@@ -14,9 +14,12 @@ use tokio::sync::{oneshot, Mutex};
 /// Returns `~/.awencode`, creating it if it does not exist.
 /// This is Awencode's isolated Codex home — separate from `~/.codex` used by the
 /// official OpenAI Codex CLI / app so the two never share sessions or config.
-fn awencode_codex_home() -> std::io::Result<PathBuf> {
+pub(crate) fn awencode_codex_home() -> std::io::Result<PathBuf> {
     let mut path = dirs::home_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot resolve home directory")
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Cannot resolve home directory",
+        )
     })?;
     path.push(".awencode");
     std::fs::create_dir_all(&path)?;
@@ -50,6 +53,19 @@ struct JsonRpcError {
     message: String,
     #[serde(default)]
     data: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum AccountInfo {
+    ApiKey {},
+    Chatgpt {},
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadAccountResponse {
+    account: Option<AccountInfo>,
 }
 
 pub struct CodexBridge {
@@ -164,7 +180,8 @@ impl CodexBridge {
             }
         });
 
-        self.initialize().await
+        self.initialize().await?;
+        self.sync_openai_auth_state().await
     }
 
     /// Perform initialize + initialized handshake so the connection is ready for other RPCs.
@@ -178,6 +195,68 @@ impl CodexBridge {
         });
         self.request("initialize", params).await?;
         self.notify("initialized", serde_json::json!({})).await
+    }
+
+    async fn sync_openai_auth_state(&mut self) -> Result<(), String> {
+        let account_state = self
+            .request("account/read", serde_json::json!({ "refreshToken": false }))
+            .await
+            .ok()
+            .and_then(|value| serde_json::from_value::<ReadAccountResponse>(value).ok());
+
+        if let Some(ReadAccountResponse { account }) = account_state {
+            match (self.openai_api_key.as_deref(), account) {
+                // Preserve a persisted ChatGPT session; the user explicitly chose it.
+                (_, Some(AccountInfo::Chatgpt { .. })) => return Ok(()),
+                // No OpenAI key stored in Awencode, but app-server is still on API-key auth.
+                // Clear the stale auth entry so a removed key does not keep working silently.
+                (None, Some(AccountInfo::ApiKey {})) => {
+                    self.request("account/logout", serde_json::json!({}))
+                        .await
+                        .map(|_| ())
+                        .map_err(|err| {
+                            format!("Failed to clear stale OpenAI API key auth: {err}")
+                        })?;
+                    return Ok(());
+                }
+                // No stored key and no auth state to reconcile.
+                (None, None) => return Ok(()),
+                // Stored key should populate API-key auth when account is empty or already apiKey.
+                (Some(_), Some(AccountInfo::ApiKey {})) | (Some(_), None) => {}
+            }
+        } else if self.openai_api_key.is_none() {
+            return Ok(());
+        }
+
+        let Some(api_key) = self.openai_api_key.clone() else {
+            return Ok(());
+        };
+
+        self.login_with_openai_api_key(&api_key).await
+    }
+
+    pub async fn activate_openai_api_key_auth(
+        &mut self,
+        openai_api_key: Option<String>,
+    ) -> Result<(), String> {
+        self.openai_api_key = openai_api_key.filter(|value| !value.trim().is_empty());
+        let Some(api_key) = self.openai_api_key.clone() else {
+            return Err("No saved OpenAI API key is available.".to_string());
+        };
+        self.login_with_openai_api_key(&api_key).await
+    }
+
+    async fn login_with_openai_api_key(&mut self, api_key: &str) -> Result<(), String> {
+        self.request(
+            "account/login/start",
+            serde_json::json!({
+                "type": "apiKey",
+                "apiKey": api_key,
+            }),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|err| format!("Failed to sync OpenAI API key with codex app-server: {err}"))
     }
 
     pub async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {

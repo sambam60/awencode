@@ -9,7 +9,7 @@ import { OnboardingFlow } from "./components/onboarding/OnboardingFlow";
 import { HomeScreen } from "./components/home/HomeScreen";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useSettingsStore } from "./lib/stores/settings-store";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useProjectWorkspaceBridge } from "./hooks/useProjectWorkspaceBridge";
 import { THEME_ROOT_ELEMENT_ID } from "./lib/theme-root";
 
@@ -31,8 +31,20 @@ function ThemeClassRoot({ children }: { children: React.ReactNode }) {
 
   const isDark = theme === "dark" || (theme === "system" && systemDark);
 
+  /* Tailwind `darkMode: "class"` and design tokens in global.css expect `html.dark`, not only a nested wrapper. */
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDark);
+  }, [isDark]);
+
+  useEffect(() => {
+    getCurrentWindow()
+      .setTheme(theme === "system" ? null : theme)
+      .catch(() => {});
+    invoke("sync_window_theme", { theme }).catch(() => {});
+  }, [theme]);
+
   return (
-    <div id={THEME_ROOT_ELEMENT_ID} className={isDark ? "dark" : ""}>
+    <div id={THEME_ROOT_ELEMENT_ID} className="h-screen" style={{ background: "transparent" }}>
       {children}
     </div>
   );
@@ -54,19 +66,9 @@ export default function App() {
     }
   }, [view, chatAgent, setView]);
 
-  useEffect(() => {
-    // Best-effort: ensure Codex picks up persisted API keys on app launch.
-    const { openAiApiKey, openRouterApiKey, azureApiKey } = useSettingsStore.getState();
-    invoke("codex_set_api_keys", {
-      openaiApiKey: openAiApiKey,
-      openrouterApiKey: openRouterApiKey,
-      azureApiKey: azureApiKey,
-    }).catch(() => {});
-  }, []);
-
   return (
     <ThemeClassRoot>
-      <div className="h-screen flex flex-col overflow-hidden bg-bg-primary text-text-primary">
+      <div className="h-screen flex flex-col overflow-hidden text-text-primary">
         {view === "home" && (
           <HomeScreen onOpenProject={() => setView("orchestrator")} />
         )}

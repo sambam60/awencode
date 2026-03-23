@@ -1,9 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-import { Box, Clock, FileDiff, Folder, GitBranch, Loader2, Play, Square } from "lucide-react";
+import { Box, Clock, FileDiff, GitBranch, Loader2, Play, Square } from "lucide-react";
+import {
+  getAgentContextPercent,
+  getAgentDiffStats,
+  getAgentTimeLabel,
+  getAgentTokenLabel,
+} from "@/lib/agent-metrics";
 import { cn } from "@/lib/utils";
-import { statusColor } from "@/lib/status";
+import { ATTENTION_COLOR, agentStatusVisual, statusColor } from "@/lib/status";
 import { useThreadStore } from "@/lib/stores/thread-store";
-import { useAppStore } from "@/lib/stores/app-store";
 import { interruptTurn } from "@/lib/codex-turn";
 import { sendChatTurn } from "@/lib/send-chat-turn";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
@@ -45,54 +50,6 @@ function modelSummaryForCard(models: string[]): string {
   return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
 }
 
-function repoLabel(agent: Agent, projectPath: string | null, projectName: string | null): string {
-  const url = agent.originUrl;
-  if (url) {
-    const m = url.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/i);
-    if (m) return m[1];
-  }
-  const name = projectName?.trim();
-  if (name) return name;
-  if (projectPath) {
-    const seg = projectPath.replace(/\/$/, "").split("/").pop();
-    if (seg) return seg;
-  }
-  return "—";
-}
-
-/** Placeholder line stats when real diff totals are not persisted (matches ChatView review pill). */
-function diffStatsForCard(agent: Agent): { add: number; del: number } | null {
-  const n = agent.files.length;
-  if (n === 0) return null;
-  return { add: n * 47, del: n * 12 };
-}
-
-/** Resolved 0–100 for the context ring; null = unknown (empty ring). */
-function contextPercentFromAgent(agent: Agent): number | null {
-  const raw = agent.contextUsagePercent;
-  if (raw != null && Number.isFinite(raw)) {
-    return Math.min(100, Math.max(0, raw));
-  }
-  const t = agent.tokens.trim();
-  if (t === "" || t === "—") return null;
-  const m = t.match(/(\d+(?:\.\d+)?)\s*%/);
-  if (m) {
-    const v = parseFloat(m[1]);
-    if (Number.isFinite(v)) return Math.min(100, Math.max(0, v));
-  }
-  return null;
-}
-
-function formatContextLabel(agent: Agent, percent: number | null): string {
-  if (percent != null) {
-    if (percent >= 99.95) return "100%";
-    const x = Math.round(percent * 10) / 10;
-    return Number.isInteger(x) ? `${x}%` : `${x.toFixed(1)}%`;
-  }
-  if (agent.tokens !== "—" && agent.tokens.trim() !== "") return agent.tokens;
-  return "—";
-}
-
 /** SVG ring: arc length tracks `percent` (null = track empty). */
 function ContextUsageRing({ percent }: { percent: number | null }) {
   const r = 4;
@@ -123,7 +80,7 @@ function ContextUsageRing({ percent }: { percent: number | null }) {
         cy={cy}
         r={r}
         fill="none"
-        className="stroke-accent-blue"
+        className="stroke-text-primary"
         strokeWidth={1.25}
         strokeLinecap="round"
         strokeDasharray={c}
@@ -153,14 +110,15 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
   const [playSending, setPlaySending] = useState(false);
   const snippetRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
-  const projectPath = useAppStore((s) => s.projectPath);
-  const projectName = useAppStore((s) => s.projectName);
+  const statusVisual = agentStatusVisual(agent);
+  const StatusIcon = statusVisual.icon;
   const composeDraft = useChatUiStore((s) => s.composeDraftByAgentId[agent.id] ?? "");
 
   const working = Boolean(agent.turnInProgress && agent.codexThreadId);
   const planLen = agent.planSteps?.length ?? 0;
   const showProgressBar =
     !compact && planLen > 0 && agent.status !== "queued" && agent.status !== "deployed";
+  const showAttentionStrip = agent.status === "active" && agent.blocked;
 
   useEffect(() => {
     const el = snippetRef.current;
@@ -196,7 +154,8 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
   const showQueuedStrip = agent.status === "queued" && !working;
   const canPlayQueued =
     composeDraft.trim().length > 0 && !playSending;
-  const contextPct = contextPercentFromAgent(agent);
+  const contextPct = getAgentContextPercent(agent);
+  const diffStats = getAgentDiffStats(agent);
 
   const handlePlayQueued = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -229,7 +188,30 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
       }}
     >
       {/* Working: info + spinner/stop; idle: info on hover only */}
-      {working && (
+      {showAttentionStrip && (
+        <div className="absolute top-2.5 right-2.5 z-[1] flex items-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDetails(agent.id);
+            }}
+            className="w-5 h-5 flex items-center justify-center rounded text-[11px] font-medium text-text-tertiary hover:text-text-primary hover:bg-bg-secondary border border-transparent hover:border-border transition-colors duration-120 cursor-pointer"
+            title="View details"
+          >
+            i
+          </button>
+          <span className="flex h-5 w-5 items-center justify-center" title={statusVisual.label}>
+            <StatusIcon
+              size={14}
+              strokeWidth={2}
+              className={cn("shrink-0", statusVisual.spin && "animate-spin")}
+              style={{ color: statusVisual.color }}
+            />
+          </span>
+        </div>
+      )}
+      {working && !showAttentionStrip && (
         <div className="absolute top-2.5 right-2.5 z-[1] flex items-center gap-1">
           <button
             type="button"
@@ -256,7 +238,12 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
             {stopHovered ? (
               <Square size={12} fill="currentColor" strokeWidth={0} />
             ) : (
-              <Loader2 size={14} className="animate-spin" strokeWidth={2} />
+              <StatusIcon
+                size={14}
+                strokeWidth={2}
+                className="shrink-0 animate-spin"
+                style={{ color: statusVisual.color }}
+              />
             )}
           </button>
         </div>
@@ -294,7 +281,7 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
           </button>
         </div>
       )}
-      {showHoverInfo && !showQueuedStrip && (
+      {showHoverInfo && !showQueuedStrip && !showAttentionStrip && (
         <button
           type="button"
           onClick={(e) => {
@@ -311,17 +298,17 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
       {agent.blocked && (
         <div
           className="font-mono text-[9.5px] font-semibold uppercase tracking-label-wide mb-1.5"
-          style={{ color: "var(--accent-red)" }}
+          style={{ color: ATTENTION_COLOR }}
         >
-          Blocked
+          Needs attention
         </div>
       )}
 
       <div
         className={cn(
           "flex justify-between items-start mb-1 gap-2",
-          !compact &&
-            (showQueuedStrip ? "pr-[52px]" : (working || showHoverInfo) && "pr-14"),
+          /* Reserve top-right chrome width always so title/snippet don’t reflow on hover (idle “i”). */
+          showQueuedStrip ? "pr-[52px]" : "pr-14",
         )}
       >
         <div
@@ -389,9 +376,6 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
         </div>
       ) : (
         <div className="flex flex-row flex-wrap items-center gap-x-2.5 gap-y-1.5 w-full text-text-secondary">
-          <MetaItem icon={<Folder size={12} strokeWidth={1.75} />}>
-            {repoLabel(agent, projectPath, projectName)}
-          </MetaItem>
           <MetaItem icon={<GitBranch size={12} strokeWidth={1.75} />}>
             {agent.branch.trim() ? agent.branch : "—"}
           </MetaItem>
@@ -403,24 +387,24 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
           <div className="inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,11rem)]">
             <ContextUsageRing percent={contextPct} />
             <span className="min-w-0 text-[11px] text-text-secondary leading-snug truncate font-sans">
-              {formatContextLabel(agent, contextPct)}
+              {getAgentTokenLabel(agent)}
             </span>
           </div>
           <MetaItem icon={<Clock size={12} strokeWidth={1.75} />}>
-            {agent.time !== "—" ? agent.time : "—"}
+            {getAgentTimeLabel(agent)}
           </MetaItem>
           <MetaItem icon={<FileDiff size={12} strokeWidth={1.75} />}>
-            {(() => {
-              const d = diffStatsForCard(agent);
-              if (!d) return "—";
-              return (
-                <span className="font-mono text-[11px] leading-snug">
-                  <span className="text-accent-green">+{d.add}</span>
-                  <span className="text-text-tertiary"> </span>
-                  <span className="text-accent-red">-{d.del}</span>
-                </span>
-              );
-            })()}
+            {!diffStats ? (
+              "—"
+            ) : diffStats.additions > 0 || diffStats.deletions > 0 ? (
+              <span className="font-mono text-[11px] leading-snug">
+                <span className="text-accent-green">+{diffStats.additions}</span>
+                <span className="text-text-tertiary"> </span>
+                <span className="text-accent-red">-{diffStats.deletions}</span>
+              </span>
+            ) : (
+              `${diffStats.files.length} file${diffStats.files.length === 1 ? "" : "s"}`
+            )}
           </MetaItem>
         </div>
       )}

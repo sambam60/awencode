@@ -26,13 +26,25 @@ import {
   Search,
   SlidersHorizontal,
   Sun,
+  X,
   type LucideProps,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore, type ThemePreference } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
-import { CURATED_MODELS, useSettingsStore, type ModelProviderId } from "@/lib/stores/settings-store";
+import {
+  hasOpenAiAccountAuth,
+  readOpenAiAccount,
+  type OpenAiAccountState,
+} from "@/lib/openai-auth";
+import {
+  CURATED_MODELS,
+  buildAzureDeploymentModels as buildAzureModels,
+  isGptFamilyModelId,
+  useSettingsStore,
+  type ModelProviderId,
+} from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
 import { searchMcpRegistry, mcpServerTomlKey, type RegistryServer } from "@/lib/mcp-registry";
 type NavIcon = ComponentType<LucideProps>;
@@ -411,50 +423,177 @@ function SettingsChoiceField<T extends string>({
   );
 }
 
+type ApiKeyStatuses = {
+  openaiConfigured: boolean;
+  openrouterConfigured: boolean;
+  azureConfigured: boolean;
+};
+
+const EMPTY_API_KEY_STATUSES: ApiKeyStatuses = {
+  openaiConfigured: false,
+  openrouterConfigured: false,
+  azureConfigured: false,
+};
+
+const EMPTY_OPENAI_ACCOUNT_STATE: OpenAiAccountState = {
+  account: null,
+  requiresOpenaiAuth: true,
+};
+
+function formatPlanType(planType?: string | null): string | null {
+  const trimmed = planType?.trim();
+  if (!trimmed) return null;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 function GeneralSection({
 }: {}) {
-  const openAiApiKey = useSettingsStore((s) => s.openAiApiKey);
-  const openRouterApiKey = useSettingsStore((s) => s.openRouterApiKey);
-  const azureApiKey = useSettingsStore((s) => s.azureApiKey);
   const azureBaseUrl = useSettingsStore((s) => s.azureBaseUrl);
-  const azureDeploymentName = useSettingsStore((s) => s.azureDeploymentName);
+  const azureDeployments = useSettingsStore((s) => s.azureDeployments);
   const modelProviderOverrides = useSettingsStore((s) => s.modelProviderOverrides);
   const setModelProviderOverride = useSettingsStore((s) => s.setModelProviderOverride);
-  const setOpenAiApiKey = useSettingsStore((s) => s.setOpenAiApiKey);
-  const setOpenRouterApiKey = useSettingsStore((s) => s.setOpenRouterApiKey);
-  const setAzureApiKey = useSettingsStore((s) => s.setAzureApiKey);
   const setAzureBaseUrl = useSettingsStore((s) => s.setAzureBaseUrl);
-  const setAzureDeploymentName = useSettingsStore((s) => s.setAzureDeploymentName);
+  const addAzureDeployment = useSettingsStore((s) => s.addAzureDeployment);
+  const removeAzureDeployment = useSettingsStore((s) => s.removeAzureDeployment);
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const enabledModels = useSettingsStore((s) => s.enabledModels);
   const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
   const setModelEnabled = useSettingsStore((s) => s.setModelEnabled);
   const ensureDefaults = useSettingsStore((s) => s.ensureDefaults);
 
-  const [draftOpenAi, setDraftOpenAi] = useState(openAiApiKey);
-  const [draftOpenRouter, setDraftOpenRouter] = useState(openRouterApiKey);
-  const [draftAzure, setDraftAzure] = useState(azureApiKey);
+  const [storedKeyStatus, setStoredKeyStatus] = useState<ApiKeyStatuses>(EMPTY_API_KEY_STATUSES);
+  const [draftOpenAi, setDraftOpenAi] = useState("");
+  const [draftOpenRouter, setDraftOpenRouter] = useState("");
+  const [draftAzure, setDraftAzure] = useState("");
+  const [removeOpenAi, setRemoveOpenAi] = useState(false);
+  const [removeOpenRouter, setRemoveOpenRouter] = useState(false);
+  const [removeAzure, setRemoveAzure] = useState(false);
   const [draftAzureBaseUrl, setDraftAzureBaseUrl] = useState(azureBaseUrl);
-  const [draftAzureDeployment, setDraftAzureDeployment] = useState(azureDeploymentName);
+  const [draftAzureDeployment, setDraftAzureDeployment] = useState("");
+  const [azureDeploymentStatus, setAzureDeploymentStatus] = useState<string | null>(null);
   const [applyStatus, setApplyStatus] = useState<"idle" | "applying" | "applied" | "error">("idle");
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [openAiAccountState, setOpenAiAccountState] = useState<OpenAiAccountState>(
+    EMPTY_OPENAI_ACCOUNT_STATE,
+  );
+  const [openAiAuthStatus, setOpenAiAuthStatus] = useState<string | null>(null);
+  const [openAiAuthBusy, setOpenAiAuthBusy] = useState<"idle" | "login" | "logout">("idle");
+  const [pendingChatgptLoginId, setPendingChatgptLoginId] = useState<string | null>(null);
+  const refreshApiKeyStatus = useCallback(async () => {
+    const nextStatus = await invoke<ApiKeyStatuses>("api_key_statuses");
+    setStoredKeyStatus(nextStatus);
+  }, []);
+  const refreshOpenAiAccount = useCallback(async () => {
+    const nextAccount = await readOpenAiAccount(false);
+    setOpenAiAccountState(nextAccount);
+  }, []);
 
   useEffect(() => {
     ensureDefaults();
   }, [ensureDefaults]);
 
-  useEffect(() => setDraftOpenAi(openAiApiKey), [openAiApiKey]);
-  useEffect(() => setDraftOpenRouter(openRouterApiKey), [openRouterApiKey]);
-  useEffect(() => setDraftAzure(azureApiKey), [azureApiKey]);
-  useEffect(() => setDraftAzureBaseUrl(azureBaseUrl), [azureBaseUrl]);
-  useEffect(() => setDraftAzureDeployment(azureDeploymentName), [azureDeploymentName]);
+  useEffect(() => {
+    refreshApiKeyStatus().catch((error) => {
+      console.error("api_key_statuses failed", error);
+    });
+  }, [refreshApiKeyStatus]);
+
+  useEffect(() => {
+    refreshOpenAiAccount().catch((error) => {
+      console.error("account/read failed", error);
+    });
+  }, [refreshOpenAiAccount]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    onNotification((payload: string) => {
+      try {
+        const msg = JSON.parse(payload) as {
+          method?: string;
+          params?: {
+            loginId?: string | null;
+            success?: boolean;
+            error?: string | null;
+          };
+        };
+
+        if (msg.method === "account/login/completed") {
+          const completedLoginId = msg.params?.loginId ?? null;
+          if (pendingChatgptLoginId && completedLoginId !== pendingChatgptLoginId) {
+            return;
+          }
+          setPendingChatgptLoginId(null);
+          setOpenAiAuthBusy("idle");
+          setOpenAiAuthStatus(
+            msg.params?.success
+              ? completedLoginId
+                ? "Connected with ChatGPT."
+                : "OpenAI API key active."
+              : msg.params?.error?.trim() ||
+                  (completedLoginId
+                    ? "ChatGPT login failed."
+                    : "OpenAI sign-in failed."),
+          );
+          refreshOpenAiAccount().catch((error) => {
+            console.error("account/read failed", error);
+          });
+          return;
+        }
+
+        if (msg.method === "account/updated") {
+          refreshOpenAiAccount().catch((error) => {
+            console.error("account/read failed", error);
+          });
+        }
+      } catch {
+        // Ignore malformed notifications.
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [pendingChatgptLoginId, refreshOpenAiAccount]);
 
   const hasKeyChanges =
-    draftOpenAi !== openAiApiKey ||
-    draftOpenRouter !== openRouterApiKey ||
-    draftAzure !== azureApiKey ||
-    draftAzureBaseUrl !== azureBaseUrl ||
-    draftAzureDeployment !== azureDeploymentName;
+    draftOpenAi.trim().length > 0 ||
+    draftOpenRouter.trim().length > 0 ||
+    draftAzure.trim().length > 0 ||
+    removeOpenAi ||
+    removeOpenRouter ||
+    removeAzure ||
+    draftAzureBaseUrl !== azureBaseUrl;
+
+  const hasOpenAiKey = (storedKeyStatus.openaiConfigured && !removeOpenAi) || draftOpenAi.trim().length > 0;
+  const hasOpenRouterKey =
+    (storedKeyStatus.openrouterConfigured && !removeOpenRouter) || draftOpenRouter.trim().length > 0;
+  const hasOpenAiAuth = hasOpenAiAccountAuth(openAiAccountState) || hasOpenAiKey;
+  const openAiAccount = openAiAccountState.account;
+  const openAiAuthTitle =
+    openAiAccount?.type === "chatgpt"
+      ? "Signed in with ChatGPT"
+      : openAiAccount?.type === "apiKey"
+        ? "API key active"
+        : "Not connected";
+  const openAiAuthDetail =
+    openAiAccount?.type === "chatgpt"
+      ? [formatPlanType(openAiAccount.planType), openAiAccount.email]
+          .filter(Boolean)
+          .join(" · ") || "Managed ChatGPT session is available."
+      : openAiAccount?.type === "apiKey"
+        ? storedKeyStatus.openaiConfigured
+          ? "Requests use your saved OpenAI API key."
+          : "Requests use the current app-server API-key session."
+        : openAiAccountState.requiresOpenaiAuth
+          ? "OpenAI models need either an API key or a ChatGPT session."
+          : "Current provider choice does not require OpenAI auth.";
+  const azureDeploymentModels = buildAzureModels(azureDeployments);
 
   const computeAzureResponsesBaseUrl = () => {
     // Azure Responses API expects the model/deployment name in the request body (field: `model`),
@@ -496,11 +635,7 @@ function GeneralSection({
     setApplyStatus("applying");
     setApplyError(null);
     try {
-      setOpenAiApiKey(draftOpenAi);
-      setOpenRouterApiKey(draftOpenRouter);
-      setAzureApiKey(draftAzure);
       setAzureBaseUrl(draftAzureBaseUrl);
-      setAzureDeploymentName(draftAzureDeployment);
 
       const azureResponsesBaseUrl = computeAzureResponsesBaseUrl();
       if (azureResponsesBaseUrl) {
@@ -537,10 +672,18 @@ function GeneralSection({
       }
 
       await invoke("codex_set_api_keys", {
-        openaiApiKey: draftOpenAi,
-        openrouterApiKey: draftOpenRouter,
-        azureApiKey: draftAzure,
+        openaiApiKey: removeOpenAi ? "" : (draftOpenAi.trim() ? draftOpenAi : null),
+        openrouterApiKey: removeOpenRouter ? "" : (draftOpenRouter.trim() ? draftOpenRouter : null),
+        azureApiKey: removeAzure ? "" : (draftAzure.trim() ? draftAzure : null),
       });
+      setDraftOpenAi("");
+      setDraftOpenRouter("");
+      setDraftAzure("");
+      setRemoveOpenAi(false);
+      setRemoveOpenRouter(false);
+      setRemoveAzure(false);
+      await refreshApiKeyStatus();
+      await refreshOpenAiAccount();
       setApplyStatus("applied");
       window.setTimeout(() => setApplyStatus("idle"), 1200);
     } catch (e) {
@@ -550,6 +693,59 @@ function GeneralSection({
       setApplyError(msg);
       setApplyStatus("error");
       window.setTimeout(() => setApplyStatus("idle"), 2500);
+    }
+  };
+
+  const submitAzureDeployment = () => {
+    const nextDeployment = draftAzureDeployment.trim();
+    if (!nextDeployment) {
+      setAzureDeploymentStatus("Enter a deployment name, then press Enter.");
+      return;
+    }
+    const added = addAzureDeployment(nextDeployment);
+    if (!added) {
+      setAzureDeploymentStatus("That deployment is already in your model list.");
+      return;
+    }
+    setDraftAzureDeployment("");
+    setAzureDeploymentStatus(`Added ${nextDeployment}.`);
+  };
+
+  const startChatgptLogin = async () => {
+    setOpenAiAuthBusy("login");
+    setOpenAiAuthStatus("Opening ChatGPT login…");
+    try {
+      const res = await rpcRequest<{
+        type: "chatgpt";
+        loginId: string;
+        authUrl: string;
+      }>("account/login/start", { type: "chatgpt" });
+      setPendingChatgptLoginId(res.loginId);
+      await invoke("open_url", { url: res.authUrl });
+      setOpenAiAuthStatus("Complete login in your browser…");
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Could not start ChatGPT login.";
+      setPendingChatgptLoginId(null);
+      setOpenAiAuthBusy("idle");
+      setOpenAiAuthStatus(msg);
+    }
+  };
+
+  const logoutOpenAiAccount = async () => {
+    setOpenAiAuthBusy("logout");
+    setOpenAiAuthStatus(null);
+    try {
+      await rpcRequest("account/logout", {});
+      setPendingChatgptLoginId(null);
+      await refreshOpenAiAccount();
+      setOpenAiAuthStatus("Signed out.");
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Could not sign out.";
+      setOpenAiAuthStatus(msg);
+    } finally {
+      setOpenAiAuthBusy("idle");
     }
   };
 
@@ -571,21 +767,92 @@ function GeneralSection({
                   OpenAI
                 </div>
                 <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
-                  Required for using OpenAI as a provider.
+                  Use an API key or sign in with ChatGPT for OpenAI-hosted models.
                 </div>
               </div>
               <div className="divide-y divide-border-light">
                 <div className="px-4 py-3 flex items-center justify-between gap-6">
                   <span className="text-[12.5px] text-text-secondary">
+                    Authentication
+                  </span>
+                  <div className="w-[360px] max-w-full flex flex-col gap-2">
+                    <div className="w-full flex items-start gap-2">
+                      <div className="min-w-0 flex-1 rounded-md border border-border-light bg-bg-card px-3 py-2.5">
+                        <div className="text-[12.5px] font-medium text-text-primary">
+                          {openAiAuthTitle}
+                        </div>
+                        <div className="mt-0.5 text-[10.5px] text-text-tertiary leading-relaxed">
+                          {openAiAuthDetail}
+                        </div>
+                      </div>
+                      {openAiAccount?.type !== "chatgpt" && (
+                        <button
+                          type="button"
+                          onClick={() => void startChatgptLogin()}
+                          disabled={openAiAuthBusy !== "idle"}
+                          className="shrink-0 px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        >
+                          {openAiAuthBusy === "login" ? "Opening…" : "Login with ChatGPT"}
+                        </button>
+                      )}
+                      {openAiAccount?.type === "chatgpt" && (
+                        <button
+                          type="button"
+                          onClick={() => void logoutOpenAiAccount()}
+                          disabled={openAiAuthBusy !== "idle"}
+                          className="shrink-0 px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        >
+                          {openAiAuthBusy === "logout" ? "Signing out…" : "Sign out"}
+                        </button>
+                      )}
+                    </div>
+                    <div className="w-full text-[10.5px] text-text-tertiary leading-relaxed">
+                      {openAiAuthStatus ??
+                        (openAiAccount?.type === "chatgpt"
+                          ? "Codex uses your ChatGPT login first and falls back to your saved API key if ChatGPT auth stops working."
+                          : "You can keep an API key saved and still use ChatGPT login when needed.")}
+                    </div>
+                  </div>
+                </div>
+                <div className="px-4 py-3 flex items-center justify-between gap-6">
+                  <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <input
-                    type="password"
-                    value={draftOpenAi}
-                    onChange={(e) => setDraftOpenAi(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                  />
+                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
+                    <div className="w-full flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={draftOpenAi}
+                        onChange={(e) => {
+                          setDraftOpenAi(e.target.value);
+                          setRemoveOpenAi(false);
+                        }}
+                        placeholder={storedKeyStatus.openaiConfigured && !removeOpenAi ? "Stored securely" : "sk-..."}
+                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                      />
+                      {storedKeyStatus.openaiConfigured && !removeOpenAi && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftOpenAi("");
+                            setRemoveOpenAi(true);
+                          }}
+                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
+                      {removeOpenAi
+                        ? "Stored key will be removed when you apply."
+                        : draftOpenAi.trim().length > 0
+                          ? "New key ready to save securely."
+                          : storedKeyStatus.openaiConfigured
+                            ? "Stored securely in your OS keychain."
+                            : "Not set."}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -605,13 +872,41 @@ function GeneralSection({
                   <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <input
-                    type="password"
-                    value={draftOpenRouter}
-                    onChange={(e) => setDraftOpenRouter(e.target.value)}
-                    placeholder="or-..."
-                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                  />
+                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
+                    <div className="w-full flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={draftOpenRouter}
+                        onChange={(e) => {
+                          setDraftOpenRouter(e.target.value);
+                          setRemoveOpenRouter(false);
+                        }}
+                        placeholder={storedKeyStatus.openrouterConfigured && !removeOpenRouter ? "Stored securely" : "or-..."}
+                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                      />
+                      {storedKeyStatus.openrouterConfigured && !removeOpenRouter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftOpenRouter("");
+                            setRemoveOpenRouter(true);
+                          }}
+                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
+                      {removeOpenRouter
+                        ? "Stored key will be removed when you apply."
+                        : draftOpenRouter.trim().length > 0
+                          ? "New key ready to save securely."
+                          : storedKeyStatus.openrouterConfigured
+                            ? "Stored securely in your OS keychain."
+                            : "Not set."}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -643,25 +938,68 @@ function GeneralSection({
                   <span className="text-[12.5px] text-text-secondary">
                     Deployment name
                   </span>
-                  <input
-                    type="text"
-                    value={draftAzureDeployment}
-                    onChange={(e) => setDraftAzureDeployment(e.target.value)}
-                    placeholder="my-deployment"
-                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                  />
+                  <div className="w-[280px] max-w-full">
+                    <input
+                      type="text"
+                      value={draftAzureDeployment}
+                      onChange={(e) => {
+                        setDraftAzureDeployment(e.target.value);
+                        if (azureDeploymentStatus) {
+                          setAzureDeploymentStatus(null);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        submitAzureDeployment();
+                      }}
+                      placeholder="Type a deployment, then press Enter"
+                      className="w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                    />
+                    <div className="mt-1 text-[10.5px] text-text-tertiary leading-relaxed">
+                      {azureDeploymentStatus ?? "Press Enter to add this deployment to the model list."}
+                    </div>
+                  </div>
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between gap-6">
                   <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <input
-                    type="password"
-                    value={draftAzure}
-                    onChange={(e) => setDraftAzure(e.target.value)}
-                    placeholder="..."
-                    className="w-[280px] max-w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                  />
+                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
+                    <div className="w-full flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={draftAzure}
+                        onChange={(e) => {
+                          setDraftAzure(e.target.value);
+                          setRemoveAzure(false);
+                        }}
+                        placeholder={storedKeyStatus.azureConfigured && !removeAzure ? "Stored securely" : "..."}
+                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                      />
+                      {storedKeyStatus.azureConfigured && !removeAzure && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftAzure("");
+                            setRemoveAzure(true);
+                          }}
+                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
+                      {removeAzure
+                        ? "Stored key will be removed when you apply."
+                        : draftAzure.trim().length > 0
+                          ? "New key ready to save securely."
+                          : storedKeyStatus.azureConfigured
+                            ? "Stored securely in your OS keychain."
+                            : "Not set."}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -696,33 +1034,23 @@ function GeneralSection({
       <div className="mb-2">
         <div className="label-mono mb-3">Models</div>
         <div className="bg-bg-card border border-border-light rounded-lg overflow-hidden divide-y divide-border-light">
-          {[
-            ...CURATED_MODELS,
-            ...(azureDeploymentName.trim()
-              ? [
-                  {
-                    id: azureDeploymentName.trim(),
-                    provider: "azure-openai-custom" as const,
-                    name: azureDeploymentName.trim(),
-                    description: "Your Azure deployment",
-                  },
-                ]
-              : []),
-          ].map((m) => {
+          {[...CURATED_MODELS, ...azureDeploymentModels].map((m) => {
             const enabled = enabledModels[m.id];
             const selected = selectedModelId === m.id;
             const providerOverride = modelProviderOverrides?.[m.id];
             const effectiveProvider = providerOverride ?? m.provider;
-            const hasAzure = azureDeploymentName.trim().length > 0;
             const isCuratedModel = CURATED_MODELS.some((c) => c.id === m.id);
-            const canSwitchProviders = isCuratedModel;
+            const isAzureDeploymentModel = !isCuratedModel && m.provider === "azure-openai-custom";
+            // Only GPT-family models can be routed to OpenAI or OpenRouter; all others are fixed.
+            const isGptModel = isCuratedModel && isGptFamilyModelId(m.id);
             const providerOptions = ([
-              { id: "openai", label: "OpenAI", enabled: openAiApiKey.trim().length > 0 },
-              { id: "openrouter", label: "OpenRouter", enabled: openRouterApiKey.trim().length > 0 },
-              { id: "azure-openai-custom", label: "Azure", enabled: hasAzure },
-            ] satisfies Array<{ id: ModelProviderId; label: string; enabled: boolean }>).filter((p) =>
-              !canSwitchProviders ? p.id === m.provider : true,
-            );
+              { id: "openai", label: "OpenAI", enabled: hasOpenAiAuth },
+              { id: "openrouter", label: "OpenRouter", enabled: hasOpenRouterKey },
+            ] satisfies Array<{ id: ModelProviderId; label: string; enabled: boolean }>).filter((p) => {
+              if (!isCuratedModel) return false;
+              if (!isGptModel) return p.id === "openrouter";
+              return true;
+            });
             return (
               <div
                 key={m.id}
@@ -742,32 +1070,38 @@ function GeneralSection({
                     <span className="text-[13px] font-medium text-text-primary">
                       {m.name}
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      {providerOptions.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          disabled={!p.enabled}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!p.enabled) return;
-                            setModelProviderOverride(m.id, p.id);
-                            if (!enabled) setModelEnabled(m.id, true);
-                            setSelectedModelId(m.id);
-                          }}
-                          className={cn(
-                            "font-mono text-[9.5px] uppercase tracking-widest border rounded px-1.5 py-0.5 transition-colors duration-120 cursor-pointer",
-                            !p.enabled
-                              ? "text-text-faint border-border-light opacity-50 cursor-default"
-                              : p.id === effectiveProvider
-                                ? "text-text-primary border-border-focus bg-bg-secondary"
-                                : "text-text-faint border-border-light hover:bg-bg-secondary",
-                          )}
-                        >
-                          {p.label}
-                        </button>
-                      ))}
-                    </div>
+                    {isAzureDeploymentModel ? (
+                      <span className="font-mono text-[9.5px] uppercase tracking-widest border rounded px-1.5 py-0.5 text-text-primary border-border-focus bg-bg-secondary">
+                        Azure
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        {providerOptions.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            disabled={!p.enabled}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!p.enabled) return;
+                              setModelProviderOverride(m.id, p.id);
+                              if (!enabled) setModelEnabled(m.id, true);
+                              setSelectedModelId(m.id);
+                            }}
+                            className={cn(
+                              "font-mono text-[9.5px] uppercase tracking-widest border rounded px-1.5 py-0.5 transition-colors duration-120 cursor-pointer",
+                              !p.enabled
+                                ? "text-text-faint border-border-light opacity-50 cursor-default"
+                                : p.id === effectiveProvider
+                                  ? "text-text-primary border-border-focus bg-bg-secondary"
+                                  : "text-text-faint border-border-light hover:bg-bg-secondary",
+                            )}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="text-[11px] text-text-tertiary mt-0.5 truncate">
                     {m.description}
@@ -784,6 +1118,20 @@ function GeneralSection({
                 >
                   ●
                 </span>
+                {isAzureDeploymentModel && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeAzureDeployment(m.id);
+                    }}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded border border-border-light text-text-faint hover:text-text-primary hover:border-border-focus transition-colors duration-120 cursor-pointer"
+                    aria-label={`Remove ${m.name}`}
+                    title={`Remove ${m.name}`}
+                  >
+                    <X className="h-3 w-3" strokeWidth={1.75} />
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -2185,7 +2533,7 @@ function ArchivedThreadsSection() {
     <div>
       <SectionHeading
         title="Archived threads"
-        description="Sessions you archived from the board. Restore adds them to the Queued column."
+        description="Sessions you archived from the board. Restore adds them to the Drafts column."
       />
       {error && (
         <p className="text-[11.5px] text-accent-red mb-4 leading-relaxed">{error}</p>

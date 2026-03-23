@@ -20,7 +20,12 @@ import {
 } from "@/lib/dnd";
 import { FolderIcon, resolveSetiKey, SetiIcon } from "@/lib/seti-icons";
 import { useIsDarkMode } from "@/lib/use-is-dark-mode";
-import { useSettingsStore, CURATED_MODELS, type ReasoningEffort } from "@/lib/stores/settings-store";
+import {
+  useSettingsStore,
+  CURATED_MODELS,
+  buildAzureDeploymentModels,
+  type ReasoningEffort,
+} from "@/lib/stores/settings-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 
 export interface Attachment {
@@ -184,26 +189,13 @@ export function ComposeArea({
 
   const selectedModelId = useSettingsStore((s) => s.selectedModelId);
   const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
-  const azureDeploymentName = useSettingsStore((s) => s.azureDeploymentName);
+  const azureDeployments = useSettingsStore((s) => s.azureDeployments);
   const enabledModels = useSettingsStore((s) => s.enabledModels);
   const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
   const setSelectedReasoningEffort = useSettingsStore((s) => s.setSelectedReasoningEffort);
   const isDark = useIsDarkMode();
 
-  const azureDeployment = azureDeploymentName.trim();
-  const modelOptions = [
-    ...CURATED_MODELS,
-    ...(azureDeployment
-      ? [
-          {
-            id: azureDeployment,
-            provider: "azure-openai-custom" as const,
-            name: azureDeployment,
-            description: "Your Azure deployment",
-          },
-        ]
-      : []),
-  ];
+  const modelOptions = [...CURATED_MODELS, ...buildAzureDeploymentModels(azureDeployments)];
 
   const enabledModelList = modelOptions.filter((m) => enabledModels[m.id]);
   const selectedModel =
@@ -371,7 +363,7 @@ export function ComposeArea({
   const canSend = !disabled && (value.trim().length > 0 || attachments.length > 0);
 
   // Expand only after enough content — 30 chars of text OR any attachment
-  const EXPAND_THRESHOLD = 30;
+  const EXPAND_THRESHOLD = 50;
   const isExpanded =
     placement === "thread" ||
     value.length >= EXPAND_THRESHOLD ||

@@ -129,10 +129,14 @@
 /* ── Design tokens ── */
 
 :root {
-  --bg-primary: #ecedef;
-  --bg-secondary: #f4f5f6;
+  --bg-primary: rgba(255, 255, 255, 0.9);
+  --bg-secondary: rgba(244, 245, 246, 1);
   --bg-card: #ffffff;
   --bg-input: #ffffff;
+
+  /* Transcript — user prompt bubble (lighter than --bg-primary / grey canvas) */
+  --user-message-bg: #fafbfc;
+  --user-message-border: #e8eaed;
 
   --border-default: #d8dadd;
   --border-light: #e4e5e8;
@@ -156,13 +160,17 @@
 }
 
 .dark {
-  --bg-primary: #1F2127;
-  --bg-secondary: #1c1e25;
-  --bg-card: #24262d;
-  --bg-input: #1e1e22;
+  --bg-primary: rgba(31, 33, 39, 0.8);
+  --bg-secondary:#24262d;
+  --bg-input:  rgba(28, 30, 37, 1);
+  --bg-card: #1e1e22;
 
-  --border-default: #2a2a2e;
-  --border-light: #26262a;
+  /* Lighter than primary / card so the bubble reads as a soft elevation */
+  --user-message-bg: #34353d;
+  --user-message-border: #4a4c56;
+
+  --border-default: #383840;
+  --border-light: #32323a;
   --border-focus: #e2e2e2;
 
   --text-primary: #e2e2e2;
@@ -189,8 +197,15 @@
     @apply border-border;
   }
 
+  html,
+  #root {
+    background: transparent;
+    height: 100%;
+  }
+
   body {
-    @apply bg-bg-primary text-text-primary font-sans antialiased;
+    @apply text-text-primary font-sans antialiased;
+    background: transparent;
     font-size: 13px;
     line-height: 1.5;
     overflow: hidden;
@@ -206,6 +221,11 @@
 /* ── Utility classes ── */
 
 @layer components {
+  /* Chat markdown: preflight sets `a { color: inherit }`; pin link colour to the design token. */
+  .agent-markdown a {
+    color: var(--text-links);
+  }
+
   .glass-overlay {
     background: rgba(249, 254, 255, 0.8);
     backdrop-filter: blur(6px);
@@ -216,7 +236,7 @@
 
   .dark .glass-overlay {
     background: rgba(29, 29, 33, 0.56);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   }
 
@@ -351,6 +371,54 @@
 
 .animate-cursor-blink {
   animation: cursor-blink 0.9s step-end infinite;
+}
+
+/* ─── Inline diff view ────────────────────────────────────────────────────── */
+
+.diff-line {
+  color: #b8bbc0;
+}
+
+.diff-line .diff-gutter {
+  color: #5f5f67;
+}
+
+.diff-line .diff-prefix {
+  color: #6b6f76;
+}
+
+.diff-line-add {
+  background: rgba(74, 173, 110, 0.08);
+}
+
+.diff-line-add .diff-gutter {
+  color: rgba(74, 173, 110, 0.5);
+  background: rgba(74, 173, 110, 0.04);
+}
+
+.diff-line-add .diff-prefix {
+  color: #4aad6e;
+}
+
+.diff-line-add td:last-child {
+  color: #b5e0c5;
+}
+
+.diff-line-del {
+  background: rgba(212, 82, 74, 0.08);
+}
+
+.diff-line-del .diff-gutter {
+  color: rgba(212, 82, 74, 0.5);
+  background: rgba(212, 82, 74, 0.04);
+}
+
+.diff-line-del .diff-prefix {
+  color: #d4524a;
+}
+
+.diff-line-del td:last-child {
+  color: #e0a8a4;
 }
 
 .hide-scrollbar {

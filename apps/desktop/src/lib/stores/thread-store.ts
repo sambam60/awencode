@@ -22,6 +22,8 @@ export interface AgentActivity {
   kind: ActivityKind;
   label: string;
   detail?: string;
+  /** Shell only: full command line; streamed stdout/stderr lives in `detail`. */
+  shellCommand?: string;
   status: "running" | "done" | "error";
   durationMs?: number;
   startedAt: number;
@@ -72,9 +74,15 @@ export interface Agent {
   progress: number;
   time: string;
   tokens: string;
+  /** Raw total token count for the thread when the server reports it. */
+  totalTokens?: number | null;
+  /** Model context window when reported alongside token usage. */
+  modelContextWindow?: number | null;
   /** Window fill 0–100 when known (drives context ring on thread cards). */
   contextUsagePercent?: number | null;
   files: string[];
+  /** Latest aggregated unified diff for the current turn. */
+  diff?: string | null;
   pr: string | null;
   messages: AgentMessage[];
   /** Live activity feed — tool calls, shell commands, file reads, etc. */
@@ -92,6 +100,10 @@ export interface Agent {
   turnInProgress?: boolean;
   /** Current in-flight turn id (from `turn/started`); required for `turn/interrupt`. */
   currentTurnId?: string | null;
+  /** Timestamp for the currently running or most recent turn. */
+  lastTurnStartedAt?: number | null;
+  /** Cached duration for the most recent finished turn. */
+  lastTurnDurationMs?: number | null;
   /** Agent plan / todo steps from `turn/plan/updated`. */
   planSteps?: AgentPlanStep[];
   /** GitHub origin URL parsed from git remote. */
@@ -137,6 +149,24 @@ interface ThreadState {
   setAgentPlan: (agentId: string, planSteps: AgentPlanStep[]) => void;
   updateAgentProgress: (agentId: string, progress: number) => void;
   setAgentCurrentTurnId: (agentId: string, turnId: string | null) => void;
+  setAgentTurnTiming: (
+    agentId: string,
+    patch: { lastTurnStartedAt?: number | null; lastTurnDurationMs?: number | null },
+  ) => void;
+  updateAgentUsage: (
+    agentId: string,
+    usage: {
+      tokens?: string;
+      totalTokens?: number | null;
+      modelContextWindow?: number | null;
+      contextUsagePercent?: number | null;
+    },
+  ) => void;
+  updateAgentDiff: (
+    agentId: string,
+    diff: string | null,
+    files: string[],
+  ) => void;
   addAgentModel: (agentId: string, model: string) => void;
   removeAgent: (agentId: string) => void;
   /** Drop messages from `fromIndex` onward and reset in-flight UI state (prompt edit / rollback). */
@@ -371,6 +401,57 @@ export const useThreadStore = create<ThreadState>((set) => ({
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === agentId ? { ...a, currentTurnId: turnId } : a,
+      ),
+    })),
+
+  setAgentTurnTiming: (agentId, patch) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              ...(patch.lastTurnStartedAt !== undefined && {
+                lastTurnStartedAt: patch.lastTurnStartedAt,
+              }),
+              ...(patch.lastTurnDurationMs !== undefined && {
+                lastTurnDurationMs: patch.lastTurnDurationMs,
+              }),
+            }
+          : a,
+      ),
+    })),
+
+  updateAgentUsage: (agentId, usage) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              ...(usage.tokens !== undefined && { tokens: usage.tokens }),
+              ...(usage.totalTokens !== undefined && {
+                totalTokens: usage.totalTokens,
+              }),
+              ...(usage.modelContextWindow !== undefined && {
+                modelContextWindow: usage.modelContextWindow,
+              }),
+              ...(usage.contextUsagePercent !== undefined && {
+                contextUsagePercent: usage.contextUsagePercent,
+              }),
+            }
+          : a,
+      ),
+    })),
+
+  updateAgentDiff: (agentId, diff, files) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              diff,
+              files,
+            }
+          : a,
       ),
     })),
 

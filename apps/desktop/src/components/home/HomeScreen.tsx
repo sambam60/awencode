@@ -1,4 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { CornerDownLeft, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
@@ -20,10 +22,17 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneError, setCloneError] = useState<string | null>(null);
+  const cloneInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setRecentProjects(getRecentProjects());
   }, []);
+
+  useEffect(() => {
+    if (!cloneOpen) return;
+    const id = requestAnimationFrame(() => cloneInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [cloneOpen]);
 
   const handleOpenProject = async () => {
     try {
@@ -51,7 +60,6 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const parentDir = await open({ directory: true, multiple: false });
       if (!parentDir || typeof parentDir !== "string") {
-        setCloneOpen(false);
         return;
       }
       const clonedPath = await invoke<string>("git_clone", { url, parentDir: parentDir });
@@ -115,34 +123,115 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
             <img src="/awencode_logo.svg" alt="awencode" className="h-16 dark:invert" />
           </div>
 
+          <AnimatePresence initial={false}>
+            {cloneOpen && (
+              <motion.div
+                key="clone-inline"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.28, ease: [0.25, 0.1, 0.25, 1] }}
+                className="w-full overflow-hidden mb-5"
+              >
+                <div className="flex flex-col gap-1.5 pb-0.5">
+                  <div className="flex items-center gap-1 border-b border-border-light pb-2">
+                    <button
+                      type="button"
+                      title="Close"
+                      aria-label="Close"
+                      onClick={() => {
+                        setCloneOpen(false);
+                        setCloneError(null);
+                      }}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-text-secondary hover:text-text-primary transition-colors duration-120 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
+                    >
+                      <X size={12} strokeWidth={1.6} />
+                    </button>
+                    <input
+                      ref={cloneInputRef}
+                      id="home-clone-url"
+                      type="url"
+                      aria-label="Repository URL"
+                      placeholder="https://github.com/owner/repo"
+                      value={cloneUrl}
+                      onChange={(e) => setCloneUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && cloneUrl.trim()) {
+                          e.preventDefault();
+                          void handleCloneRepo();
+                        }
+                      }}
+                      className="min-w-0 flex-1 appearance-none border-0 bg-transparent py-1 pr-1 text-[13px] text-text-primary placeholder:text-text-faint caret-text-tertiary shadow-none [color-scheme:inherit] focus:outline-none focus:ring-0 focus-visible:outline-none selection:bg-border-light selection:text-text-primary"
+                    />
+                    <button
+                      type="button"
+                      title="Clone repository"
+                      aria-label="Clone repository"
+                      disabled={!cloneUrl.trim()}
+                      onClick={() => void handleCloneRepo()}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary disabled:text-text-faint disabled:pointer-events-none transition-colors duration-120 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
+                    >
+                      <CornerDownLeft size={12} strokeWidth={1.6} />
+                    </button>
+                  </div>
+                  {cloneError && (
+                    <p className="text-[10.5px] text-accent-red leading-snug px-0.5">
+                      {cloneError}
+                    </p>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Action buttons */}
           <div className="grid grid-cols-2 gap-2 mb-6">
             <button
+              type="button"
               onClick={handleOpenProject}
               className="px-4 py-3 bg-bg-card border border-border rounded-lg text-left cursor-pointer hover:shadow-level-1 hover:bg-bg-secondary/40 hover:border-border-focus transition-all duration-120 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
             >
-              <div className="mb-2 text-text-tertiary group-hover:text-text-secondary transition-colors duration-120">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-                  <path d="M12 11v6"/>
-                  <path d="M9 14h6"/>
-                </svg>
+              <div className="mb-2 transition-opacity duration-120 opacity-85 group-hover:opacity-100">
+                <img
+                  src="/folder_icon.svg"
+                  alt=""
+                  className="h-[14px] w-auto shrink-0 dark:invert"
+                />
               </div>
               <div className="text-[13px] font-medium text-text-primary">
                 Open project
               </div>
             </button>
             <button
-              onClick={() => setCloneOpen(true)}
-              className="px-4 py-3 bg-bg-card border border-border rounded-lg text-left cursor-pointer hover:shadow-level-1 hover:bg-bg-secondary/40 hover:border-border-focus transition-all duration-120 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
+              type="button"
+              onClick={() => {
+                setCloneOpen((open) => !open);
+                setCloneError(null);
+              }}
+              className={`px-4 py-3 bg-bg-card border rounded-lg text-left cursor-pointer hover:shadow-level-1 hover:bg-bg-secondary/40 transition-all duration-120 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue ${
+                cloneOpen
+                  ? "border-border-focus shadow-level-1"
+                  : "border-border hover:border-border-focus"
+              }`}
             >
-              <div className="mb-2 text-text-tertiary group-hover:text-text-secondary transition-colors duration-120">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="18" cy="18" r="3"/>
-                  <circle cx="6" cy="6" r="3"/>
-                  <circle cx="6" cy="18" r="3"/>
-                  <path d="M8.6 7.6 15.4 16.4"/>
-                  <path d="M6 9v6"/>
+              <div className="mb-2 transition-opacity duration-120 opacity-85 group-hover:opacity-100">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  className="shrink-0 text-text-primary"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <circle cx="18" cy="18" r="3" />
+                  <circle cx="6" cy="6" r="3" />
+                  <circle cx="6" cy="18" r="3" />
+                  <path d="M8.6 7.6 15.4 16.4" />
+                  <path d="M6 9v6" />
                 </svg>
               </div>
               <div className="text-[13px] font-medium text-text-primary">
@@ -150,42 +239,6 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
               </div>
             </button>
           </div>
-
-          {cloneOpen && (
-            <>
-              <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCloneOpen(false)} />
-              <div className="fixed left-1/2 top-1/2 z-50 w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-default bg-bg-card p-4 shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
-                <div className="font-mono text-[10px] text-text-faint uppercase tracking-widest mb-2">
-                  Clone repository
-                </div>
-                <input
-                  type="url"
-                  placeholder="https://github.com/user/repo"
-                  value={cloneUrl}
-                  onChange={(e) => setCloneUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
-                />
-                {cloneError && (
-                  <p className="text-[11px] text-accent-red mb-2">{cloneError}</p>
-                )}
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={() => setCloneOpen(false)}
-                    className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleCloneRepo}
-                    disabled={!cloneUrl.trim()}
-                    className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 disabled:opacity-50"
-                  >
-                    Clone
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
 
           {/* Recent projects */}
           <div>
@@ -210,7 +263,7 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
                     <span className="text-[13px] font-medium text-text-primary">
                       {project.name}
                     </span>
-                    <span className="font-mono text-[10.5px] text-text-faint truncate max-w-[180px]">
+                    <span className="text-[10.5px] text-text-faint truncate max-w-[180px]">
                       {project.path}
                     </span>
                   </button>

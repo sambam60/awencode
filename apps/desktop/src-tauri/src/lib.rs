@@ -1,11 +1,20 @@
 mod codex_bridge;
+mod openai;
+mod secrets;
 
 use base64::Engine;
 use codex_bridge::CodexBridge;
+use secrets::{load_api_key_statuses, load_api_keys, persist_api_key_updates};
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use tauri::window::Color;
 use tauri::Manager;
 use tokio::sync::Mutex;
+#[cfg(target_os = "macos")]
+use window_vibrancy::{
+    apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +22,85 @@ struct AppListItemResult {
     id: String,
     name: String,
     is_accessible: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum PersistedOpenAiAccountResult {
+    ApiKey {},
+    Chatgpt {
+        email: Option<String>,
+        plan_type: Option<String>,
+    },
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedOpenAiAccountStateResult {
+    account: Option<PersistedOpenAiAccountResult>,
+}
+
+fn read_persisted_openai_auth_state_result() -> Result<PersistedOpenAiAccountStateResult, String> {
+    let auth_path = codex_bridge::awencode_codex_home()
+        .map_err(|err| format!("Failed to resolve Awencode data directory: {err}"))?
+        .join("auth.json");
+    let contents = match std::fs::read_to_string(&auth_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PersistedOpenAiAccountStateResult { account: None });
+        }
+        Err(err) => {
+            return Err(format!("Failed to read persisted auth state: {err}"));
+        }
+    };
+    let auth_json: serde_json::Value = serde_json::from_str(&contents)
+        .map_err(|err| format!("Failed to parse auth.json: {err}"))?;
+
+    if auth_json
+        .get("OPENAI_API_KEY")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(PersistedOpenAiAccountStateResult {
+            account: Some(PersistedOpenAiAccountResult::ApiKey {}),
+        });
+    }
+
+    let id_token = match auth_json
+        .get("tokens")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|tokens| tokens.get("id_token"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(token) if !token.trim().is_empty() => token,
+        _ => {
+            return Ok(PersistedOpenAiAccountStateResult { account: None });
+        }
+    };
+
+    let payload_segment = id_token.split('.').nth(1).unwrap_or_default();
+    let decoded_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|err| format!("Failed to decode persisted ChatGPT token payload: {err}"))?;
+    let payload_json: serde_json::Value = serde_json::from_slice(&decoded_payload)
+        .map_err(|err| format!("Failed to parse persisted ChatGPT token payload: {err}"))?;
+    let auth_section = payload_json
+        .get("https://api.openai.com/auth")
+        .and_then(serde_json::Value::as_object);
+
+    Ok(PersistedOpenAiAccountStateResult {
+        account: Some(PersistedOpenAiAccountResult::Chatgpt {
+            email: payload_json
+                .get("email")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            plan_type: auth_section
+                .and_then(|section| section.get("chatgpt_plan_type"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        }),
+    })
 }
 
 #[tauri::command]
@@ -48,26 +136,64 @@ async fn rpc_respond(
     state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
 ) -> Result<(), String> {
     let mut bridge = state.lock().await;
-    bridge
-        .respond(id, result)
-        .await
-        .map_err(|e| e.to_string())
+    bridge.respond(id, result).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn codex_set_api_keys(
-    openai_api_key: String,
-    openrouter_api_key: String,
-    azure_api_key: String,
+    openai_api_key: Option<String>,
+    openrouter_api_key: Option<String>,
+    azure_api_key: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
 ) -> Result<(), String> {
+    let stored = persist_api_key_updates(
+        openai_api_key.as_deref(),
+        openrouter_api_key.as_deref(),
+        azure_api_key.as_deref(),
+    )?;
     let mut bridge = state.lock().await;
-    let openai = (!openai_api_key.trim().is_empty()).then_some(openai_api_key);
-    let openrouter = (!openrouter_api_key.trim().is_empty()).then_some(openrouter_api_key);
-    let azure = (!azure_api_key.trim().is_empty()).then_some(azure_api_key);
-    bridge.set_api_keys(openai, openrouter, azure);
+    bridge.set_api_keys(stored.openai, stored.openrouter, stored.azure);
     bridge.restart(&app).await
+}
+
+#[tauri::command]
+async fn codex_activate_openai_api_key_auth(
+    state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
+) -> Result<(), String> {
+    let stored = load_api_keys()?;
+    let mut bridge = state.lock().await;
+    bridge.activate_openai_api_key_auth(stored.openai).await
+}
+
+#[tauri::command]
+fn codex_read_persisted_openai_auth_state() -> Result<PersistedOpenAiAccountStateResult, String> {
+    read_persisted_openai_auth_state_result()
+}
+
+#[tauri::command]
+async fn codex_refresh_bridge_credentials(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Mutex<CodexBridge>>>,
+) -> Result<(), String> {
+    let stored = load_api_keys()?;
+    let mut bridge = state.lock().await;
+    bridge.set_api_keys(stored.openai, stored.openrouter, stored.azure);
+    bridge.restart(&app).await
+}
+
+#[tauri::command]
+fn api_key_statuses() -> Result<secrets::ApiKeyStatuses, String> {
+    load_api_key_statuses()
+}
+
+#[tauri::command]
+async fn generate_thread_title(seed_message: String) -> Result<Option<String>, String> {
+    let stored = load_api_keys()?;
+    let Some(openai_api_key) = stored.openai else {
+        return Ok(None);
+    };
+    openai::generate_thread_title(&openai_api_key, &seed_message).await
 }
 
 /// Whether `path` exists on disk and is a directory (false if missing or inaccessible).
@@ -198,10 +324,14 @@ fn resolve_app_icon_macos(app_id: &str, app_name: &str) -> Result<Option<String>
 
     let status = std::process::Command::new("sips")
         .args([
-            "-s", "format", "png",
+            "-s",
+            "format",
+            "png",
             &icns_str,
-            "--resampleHeightWidthMax", "64",
-            "--out", &png_path_str,
+            "--resampleHeightWidthMax",
+            "64",
+            "--out",
+            &png_path_str,
         ])
         .status()
         .map_err(|e| e.to_string())?;
@@ -232,9 +362,7 @@ fn read_icon_file_from_plist(
         return Ok(None);
     }
 
-    let icon_name = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
+    let icon_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if icon_name.is_empty() {
         return Ok(None);
     }
@@ -402,6 +530,44 @@ async fn get_git_info(path: String) -> Result<GitInfoResult, String> {
     })
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitPrInfo {
+    number: String,
+    url: String,
+}
+
+/// Look up the open PR for the current branch via `gh pr view`.
+/// Returns `null` (Ok(None)) when there is no PR or `gh` is unavailable.
+#[tauri::command]
+async fn get_branch_pr(path: String) -> Result<Option<GitPrInfo>, String> {
+    let path = std::path::PathBuf::from(path);
+    if !path.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("gh")
+            .args(["pr", "view", "--json", "number,url", "--jq", ".number,.url"])
+            .current_dir(&path)
+            .output()
+            .ok();
+        let output = match output {
+            Some(o) if o.status.success() => o,
+            _ => return Ok(None),
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut lines = text.trim().lines();
+        let number = lines.next().unwrap_or("").trim().to_string();
+        let url = lines.next().unwrap_or("").trim().to_string();
+        if number.is_empty() || url.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(GitPrInfo { number, url }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct FileStatusEntry {
@@ -489,7 +655,13 @@ fn build_dir_tree(
     for entry in read_dir {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" || name == "dist" || name == "build" {
+        if name.starts_with('.')
+            || name == "node_modules"
+            || name == "target"
+            || name == "__pycache__"
+            || name == "dist"
+            || name == "build"
+        {
             continue;
         }
         let file_type = entry.file_type().map_err(|e| e.to_string())?;
@@ -501,7 +673,12 @@ fn build_dir_tree(
             .to_string_lossy()
             .to_string();
         let children = if is_dir && current_depth < max_depth {
-            Some(build_dir_tree(base, &entry.path(), current_depth + 1, max_depth)?)
+            Some(build_dir_tree(
+                base,
+                &entry.path(),
+                current_depth + 1,
+                max_depth,
+            )?)
         } else if is_dir {
             Some(Vec::new())
         } else {
@@ -514,12 +691,10 @@ fn build_dir_tree(
             children,
         });
     }
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
     Ok(entries)
 }
@@ -650,13 +825,83 @@ async fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
         .map_err(|_| "Invalid path".to_string())
 }
 
+#[tauri::command]
+fn sync_window_theme(theme: String, app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?;
+
+        let theme = theme.trim();
+        let material = match theme {
+            "light" => {
+                window
+                    .set_theme(Some(tauri::Theme::Light))
+                    .map_err(|e| e.to_string())?;
+                NSVisualEffectMaterial::Light
+            }
+            "dark" => {
+                window
+                    .set_theme(Some(tauri::Theme::Dark))
+                    .map_err(|e| e.to_string())?;
+                NSVisualEffectMaterial::Dark
+            }
+            _ => {
+                window.set_theme(None).map_err(|e| e.to_string())?;
+                NSVisualEffectMaterial::Sidebar
+            }
+        };
+
+        window
+            .set_background_color(Some(Color(0, 0, 0, 1)))
+            .map_err(|e| e.to_string())?;
+        let _ = clear_vibrancy(&window);
+        apply_vibrancy(&window, material, Some(NSVisualEffectState::Active), None)
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (theme, app);
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let bridge = Arc::new(Mutex::new(CodexBridge::new()));
+            #[cfg(target_os = "macos")]
+            {
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main window not found");
+                window
+                    .set_background_color(Some(Color(0, 0, 0, 1)))
+                    .expect("Failed to set window background color");
+                apply_vibrancy(
+                    &window,
+                    NSVisualEffectMaterial::Sidebar,
+                    Some(NSVisualEffectState::Active),
+                    None,
+                )
+                .expect("Failed to apply vibrancy");
+            }
+
+            let mut bridge = CodexBridge::new();
+            match load_api_keys() {
+                Ok(stored) => {
+                    bridge.set_api_keys(stored.openai, stored.openrouter, stored.azure);
+                }
+                Err(err) => {
+                    eprintln!("Failed to load API keys from secure storage: {err}");
+                }
+            }
+            let bridge = Arc::new(Mutex::new(bridge));
             app.manage(bridge.clone());
 
             let handle = app.handle().clone();
@@ -674,6 +919,11 @@ pub fn run() {
             rpc_notify,
             rpc_respond,
             codex_set_api_keys,
+            codex_activate_openai_api_key_auth,
+            codex_read_persisted_openai_auth_state,
+            codex_refresh_bridge_credentials,
+            api_key_statuses,
+            generate_thread_title,
             git_clone,
             git_create_branch,
             open_in_app,
@@ -681,9 +931,11 @@ pub fn run() {
             resolve_app_icon,
             open_url,
             get_git_info,
+            get_branch_pr,
             get_git_file_status,
             path_is_directory,
             list_directory_tree,
+            sync_window_theme,
             git_commit,
             git_push,
         ])

@@ -1,6 +1,7 @@
 import { AgentCard } from "./AgentCard";
 import type { Agent, AgentStatus } from "@/lib/stores/thread-store";
 import { STATUS_CONFIG } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 interface ColumnProps {
   status: AgentStatus;
@@ -18,6 +19,7 @@ export function Column({
   isLast,
 }: ColumnProps) {
   const config = STATUS_CONFIG[status];
+  const StatusIcon = config.icon;
 
   return (
     <div
@@ -29,9 +31,11 @@ export function Column({
       }}
     >
       <div className="flex items-center gap-2 mb-4">
-        <span
-          className="inline-block w-[5px] h-[5px] rounded-full"
-          style={{ background: config.color }}
+        <StatusIcon
+          size={12}
+          strokeWidth={1.8}
+          className={cn("shrink-0", config.spin && "animate-spin")}
+          style={{ color: config.color }}
         />
         <span className="label-mono">{config.label}</span>
         <span className="font-mono text-[10px] text-text-faint">

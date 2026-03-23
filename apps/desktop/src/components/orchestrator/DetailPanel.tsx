@@ -1,9 +1,29 @@
-import React, { useState } from "react";
-import { Archive, Trash2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  Archive,
+  ArrowUpRight,
+  Check,
+  CircleCheck,
+  CircleDashed,
+  CircleDot,
+  CircleX,
+  CloudUpload,
+  GitBranch,
+  GitCommit,
+  GitMerge,
+  GitPullRequest,
+  MessageSquare,
+  Trash2,
+  UserCheck,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { statusColor } from "@/lib/status";
+import { getAgentTimeLabel, getAgentTokenLabel } from "@/lib/agent-metrics";
+import { agentStatusLabel, agentStatusVisual, statusColor } from "@/lib/status";
 import { GlassConfirmDialog } from "@/components/ui/GlassConfirmDialog";
 import { rpcRequest } from "@/lib/rpc-client";
+import { invoke } from "@tauri-apps/api/core";
+import { useAppStore } from "@/lib/stores/app-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import type { Agent, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
@@ -15,6 +35,27 @@ interface DetailPanelProps {
 
 const TABS = ["status", "chat", "files"] as const;
 type Tab = (typeof TABS)[number];
+
+function githubRepoPath(originUrl: string | null | undefined): string | null {
+  if (!originUrl) return null;
+  const match = originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+  return match?.[1] ?? null;
+}
+
+function currentPrUrl(agent: Agent): string | null {
+  if (agent.prStatus?.prUrl) return agent.prStatus.prUrl;
+  const repoPath = githubRepoPath(agent.originUrl);
+  if (!repoPath || !agent.pr) return null;
+  const prNumber = agent.pr.replace("#", "").trim();
+  if (!prNumber) return null;
+  return `https://github.com/${repoPath}/pull/${prNumber}`;
+}
+
+function comparePrUrl(agent: Agent): string | null {
+  const repoPath = githubRepoPath(agent.originUrl);
+  if (!repoPath || !agent.branch.trim()) return null;
+  return `https://github.com/${repoPath}/compare/${encodeURIComponent(agent.branch)}?expand=1`;
+}
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -79,114 +120,156 @@ function PrStatusRow({
   );
 }
 
-function PrStatusCard({ prStatus, prUrl }: { prStatus: PrStatus; prUrl: string | null }) {
+function GitActionRow({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-md px-1 py-2 text-left transition-colors duration-120",
+        disabled
+          ? "cursor-not-allowed text-text-faint opacity-55"
+          : "cursor-pointer text-text-primary hover:bg-bg-secondary/70",
+      )}
+    >
+      <span className="shrink-0 text-text-tertiary">{icon}</span>
+      <span className="font-sans text-[13px]">{label}</span>
+    </button>
+  );
+}
+
+function PrStatusCard({
+  prStatus,
+  prUrl,
+  onOpenPr,
+  framed = true,
+}: {
+  prStatus: PrStatus | null;
+  prUrl: string | null;
+  onOpenPr: () => void;
+  framed?: boolean;
+}) {
   const checksIcon =
-    prStatus.checksState === "success" ? (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6.5" stroke="#3a9d63" />
-        <path d="M4 7l2 2 4-4" stroke="#3a9d63" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ) : prStatus.checksState === "failure" ? (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6.5" stroke="#c0392b" />
-        <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke="#c0392b" strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
-    ) : prStatus.checksState === "pending" ? (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" />
-        <circle cx="7" cy="7" r="2" fill="#9b9ea4" />
-      </svg>
+    prStatus?.checksState === "success" ? (
+      <CircleCheck size={14} strokeWidth={1.5} className="text-accent-green" />
+    ) : prStatus?.checksState === "failure" ? (
+      <CircleX size={14} strokeWidth={1.5} className="text-accent-red" />
+    ) : prStatus?.checksState === "pending" ? (
+      <CircleDot size={14} strokeWidth={1.5} className="text-text-faint" />
     ) : (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" strokeDasharray="2 2" />
-      </svg>
+      <CircleDashed size={14} strokeWidth={1.5} className="text-text-faint" />
     );
 
   const checksLabel =
-    prStatus.checksState === "success"
+    prStatus?.checksState === "success"
       ? "Checks successful"
-      : prStatus.checksState === "failure"
+      : prStatus?.checksState === "failure"
         ? "Checks failing"
-        : prStatus.checksState === "pending"
+        : prStatus?.checksState === "pending"
           ? "Checks running"
-          : "No checks";
+          : prUrl
+            ? "Connect GitHub token to see checks"
+            : "No pull request yet";
 
   const approvalsIcon = (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="6.5" stroke="#9b9ea4" />
-      <path d="M4.5 7.5a2 2 0 1 1 4 0" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
-      <circle cx="7" cy="5" r="1.2" fill="#9b9ea4" />
-    </svg>
+    <UserCheck size={14} strokeWidth={1.5} className="text-text-faint" />
   );
 
   const commentsIcon = (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1.5" y="2.5" width="11" height="8" rx="1.5" stroke="#9b9ea4" strokeWidth="1.2" />
-      <path d="M4 9.5l1.5 2" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M4 6h6M4 8h4" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
+    <MessageSquare size={14} strokeWidth={1.5} className="text-text-faint" />
   );
 
   const mergeIcon = (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M3 3v8M11 5v6M3 11a2 2 0 0 0 4 0M3 3a2 2 0 0 1 4 0v2a2 2 0 0 0 4 0" stroke="#9b9ea4" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <GitMerge size={14} strokeWidth={1.5} className="text-text-faint" />
   );
 
   return (
-    <div className="border border-border-light rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border-light bg-bg-secondary">
-        <img src="/octicon.svg" alt="" className="w-3 h-3 opacity-40 dark:invert shrink-0" />
-        <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">PR status</span>
-        {prUrl && (
-          <a
-            href={prUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="ml-auto font-mono text-[9.5px] text-text-faint hover:text-text-secondary transition-colors duration-120"
-            onClick={(e) => { e.stopPropagation(); }}
-          >
-            {prStatus.prNumber ? `#${prStatus.prNumber}` : "view ↗"}
-          </a>
-        )}
+    <div
+      className={cn(
+        "overflow-hidden bg-bg-card",
+        framed && "border border-border-light rounded-lg",
+      )}
+    >
+      <div className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <img src="/octicon.svg" alt="" className="w-3 h-3 opacity-40 dark:invert shrink-0" />
+          <span className="font-sans text-[9.5px] font-medium text-text-faint uppercase tracking-widest">
+            PR status
+          </span>
+          {prUrl ? (
+            <button
+              type="button"
+              onClick={onOpenPr}
+              className="ml-auto inline-flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-widest text-text-faint hover:text-text-secondary transition-colors duration-120 cursor-pointer"
+            >
+              {prStatus?.prNumber ? `#${prStatus.prNumber}` : "view"}
+              <ArrowUpRight size={10} strokeWidth={1.75} />
+            </button>
+          ) : null}
+        </div>
       </div>
-      <div className="px-3 divide-y divide-border-light">
+      <div className="border-t border-border-light px-4 divide-y divide-border-light">
         <PrStatusRow icon={checksIcon} label={checksLabel} />
         <PrStatusRow
           icon={approvalsIcon}
-          label={prStatus.approvals === 0 ? "No approvals yet" : `${prStatus.approvals} approval${prStatus.approvals === 1 ? "" : "s"}`}
+          label={
+            prStatus
+              ? prStatus.approvals === 0
+                ? "No approvals yet"
+                : `${prStatus.approvals} approval${prStatus.approvals === 1 ? "" : "s"}`
+              : prUrl
+                ? "PR metadata unavailable"
+                : "No approvals yet"
+          }
         />
-        {prStatus.comments > 0 && (
+        {prStatus?.comments ? (
           <PrStatusRow
             icon={commentsIcon}
             label={`${prStatus.comments} comment${prStatus.comments === 1 ? "" : "s"}`}
             action={
               prUrl ? (
-                <a
-                  href={prUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={onOpenPr}
                   className="px-2 py-0.5 text-[10.5px] text-text-secondary border border-border-default rounded hover:bg-bg-secondary transition-colors duration-120 font-sans"
                 >
                   Address all
-                </a>
+                </button>
               ) : undefined
             }
           />
-        )}
+        ) : null}
         <PrStatusRow
           icon={mergeIcon}
-          label={prStatus.mergeable ? "Ready to merge" : "Not ready to merge"}
+          label={
+            prStatus
+              ? prStatus.mergeable
+                ? "Ready to merge"
+                : "Not ready to merge"
+              : prUrl
+                ? "PR ready state unavailable"
+                : "No pull request yet"
+          }
           action={
-            prStatus.mergeable && prUrl ? (
-              <a
-                href={prUrl}
-                target="_blank"
-                rel="noreferrer"
+            prStatus?.mergeable && prUrl ? (
+              <button
+                type="button"
+                onClick={onOpenPr}
                 className="px-2 py-0.5 text-[10.5px] text-text-secondary border border-border-default rounded hover:bg-bg-secondary transition-colors duration-120 font-sans"
               >
                 Merge
-              </a>
+              </button>
             ) : undefined
           }
         />
@@ -195,25 +278,74 @@ function PrStatusCard({ prStatus, prUrl }: { prStatus: PrStatus; prUrl: string |
   );
 }
 
+function GitOverviewCard({
+  prStatus,
+  prUrl,
+  existingPrUrl,
+  prActionLabel,
+  onCommit,
+  onPush,
+  onViewPr,
+  onCreateBranch,
+  gitDisabled,
+}: {
+  prStatus: PrStatus | null;
+  prUrl: string | null;
+  existingPrUrl: string | null;
+  prActionLabel: string;
+  onCommit: () => void;
+  onPush: () => void;
+  onViewPr: () => void;
+  onCreateBranch: () => void;
+  gitDisabled: boolean;
+}) {
+  return (
+    <div className="border border-border-light rounded-lg overflow-hidden bg-bg-card">
+      <div className="px-4 py-3">
+        <div className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest mb-2.5">
+          Git actions
+        </div>
+        <div className="flex flex-col">
+          <GitActionRow
+            icon={<GitCommit size={16} strokeWidth={1.8} />}
+            label="Commit"
+            onClick={onCommit}
+            disabled={gitDisabled}
+          />
+          <GitActionRow
+            icon={<CloudUpload size={16} strokeWidth={1.8} />}
+            label="Push"
+            onClick={onPush}
+            disabled={gitDisabled}
+          />
+          <GitActionRow
+            icon={<GitPullRequest size={16} strokeWidth={1.8} />}
+            label={prActionLabel}
+            onClick={onViewPr}
+            disabled={!prUrl}
+          />
+          <GitActionRow
+            icon={<GitBranch size={16} strokeWidth={1.8} />}
+            label="Create branch"
+            onClick={onCreateBranch}
+            disabled={gitDisabled}
+          />
+        </div>
+      </div>
+      <div className="border-t border-border-light" />
+      <PrStatusCard
+        prStatus={prStatus}
+        prUrl={existingPrUrl}
+        onOpenPr={onViewPr}
+        framed={false}
+      />
+    </div>
+  );
+}
+
 function OpenFullViewArrow({ className }: { className?: string }) {
   return (
-    <svg
-      width={18}
-      height={18}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={cn("shrink-0", className)}
-      aria-hidden
-    >
-      <path
-        d="M7 17L17 7M17 7H9M17 7V15"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <ArrowUpRight size={16} strokeWidth={1.5} className={cn("shrink-0", className)} aria-hidden />
   );
 }
 
@@ -224,12 +356,67 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const [confirmKind, setConfirmKind] = useState<ConfirmKind>(null);
   const [actionBusy, setActionBusy] = useState<"archive" | "delete" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [gitDialog, setGitDialog] = useState<"commit" | "branch" | null>(null);
+  const [gitBusy, setGitBusy] = useState<
+    "commit" | "push" | "branch" | "openPr" | null
+  >(null);
+  const [gitError, setGitError] = useState<string | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [newBranchName, setNewBranchName] = useState("");
   const removeAgent = useThreadStore((s) => s.removeAgent);
+  const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
+  const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
+  const projectPath = useAppStore((s) => s.projectPath);
   const accent = statusColor(agent);
+  const statusVisual = agentStatusVisual(agent);
+  const StatusIcon = statusVisual.icon;
 
   const threadId = agent.codexThreadId ?? null;
   const canArchive = Boolean(threadId);
+  const canRunGitActions = Boolean(projectPath);
   const modelsUsed = agent.modelsUsed ?? [];
+
+  const [detectedPrUrl, setDetectedPrUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    let cancelled = false;
+    invoke<{ number: string; url: string } | null>("get_branch_pr", {
+      path: projectPath,
+    })
+      .then((result) => {
+        if (cancelled || !result) return;
+        setDetectedPrUrl(result.url);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectPath, agent.branch]);
+
+  const existingPrUrl = currentPrUrl(agent) ?? detectedPrUrl;
+  const prUrl = existingPrUrl ?? comparePrUrl(agent);
+  const prActionLabel = existingPrUrl ? "Open PR" : "Create PR";
+
+  async function refreshGitInfo() {
+    if (!projectPath) return;
+    try {
+      const info = await invoke<{
+        branch?: string | null;
+        sha?: string | null;
+        originUrl?: string | null;
+      }>("get_git_info", { path: projectPath });
+      updateAgentGitInfo(agent.id, {
+        branch: info.branch ?? undefined,
+        sha: info.sha ?? undefined,
+        originUrl: info.originUrl ?? undefined,
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  function markDone() {
+    setAgentStatus(agent.id, "deployed");
+  }
 
   function openArchiveConfirm() {
     if (!threadId || actionBusy) return;
@@ -272,6 +459,72 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
     }
   }
 
+  async function runCommit() {
+    if (!projectPath || !commitMessage.trim()) return;
+    setGitError(null);
+    setGitBusy("commit");
+    try {
+      await invoke("git_commit", {
+        path: projectPath,
+        message: commitMessage.trim(),
+      });
+      markDone();
+      setCommitMessage("");
+      setGitDialog(null);
+      await refreshGitInfo();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Commit failed");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function runPush() {
+    if (!projectPath) return;
+    setGitError(null);
+    setGitBusy("push");
+    try {
+      await invoke("git_push", { path: projectPath });
+      await refreshGitInfo();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Push failed");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function runOpenPr() {
+    if (!prUrl) return;
+    setGitError(null);
+    setGitBusy("openPr");
+    try {
+      await invoke("open_url", { url: prUrl });
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Couldn't open pull request");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function runCreateBranch() {
+    if (!projectPath || !newBranchName.trim()) return;
+    setGitError(null);
+    setGitBusy("branch");
+    try {
+      await invoke("git_create_branch", {
+        path: projectPath,
+        name: newBranchName.trim(),
+      });
+      setNewBranchName("");
+      setGitDialog(null);
+      await refreshGitInfo();
+    } catch (e) {
+      setGitError(e instanceof Error ? e.message : "Create branch failed");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
   return (
     <>
     <GlassConfirmDialog
@@ -298,6 +551,73 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         else if (k === "delete") void runDelete();
       }}
     />
+    {gitDialog !== null ? (
+      <>
+        <div
+          className="fixed inset-0 z-[90] bg-black/20 dark:bg-black/40"
+          onClick={() => {
+            if (gitBusy === null) setGitDialog(null);
+          }}
+          aria-hidden
+        />
+        <div className="fixed left-1/2 top-1/2 z-[100] w-[min(360px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-default bg-bg-card p-5 shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
+          <div className="font-mono text-[10px] text-text-faint uppercase tracking-widest mb-2">
+            {gitDialog === "commit" ? "Commit message" : "New branch name"}
+          </div>
+          <input
+            value={gitDialog === "commit" ? commitMessage : newBranchName}
+            onChange={(e) => {
+              if (gitDialog === "commit") setCommitMessage(e.target.value);
+              else setNewBranchName(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              if (gitDialog === "commit") void runCommit();
+              else void runCreateBranch();
+            }}
+            placeholder={
+              gitDialog === "commit" ? "Describe your changes..." : "feat/my-branch"
+            }
+            className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
+          />
+          {gitError ? (
+            <p className="text-[11px] text-accent-red mb-3 leading-snug">{gitError}</p>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={gitBusy !== null}
+              onClick={() => setGitDialog(null)}
+              className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary transition-colors duration-120 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={
+                gitBusy !== null ||
+                (gitDialog === "commit"
+                  ? !commitMessage.trim()
+                  : !newBranchName.trim())
+              }
+              onClick={() => {
+                if (gitDialog === "commit") void runCommit();
+                else void runCreateBranch();
+              }}
+              className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 transition-opacity duration-120 disabled:opacity-50"
+            >
+              {gitDialog === "commit"
+                ? gitBusy === "commit"
+                  ? "Committing…"
+                  : "Commit"
+                : gitBusy === "branch"
+                  ? "Creating…"
+                  : "Create branch"}
+            </button>
+          </div>
+        </div>
+      </>
+    ) : null}
     <div
       className="w-[360px] h-full flex flex-col shrink-0 overflow-hidden rounded-l-[10px] border-l border-border-light glass-overlay"
     >
@@ -309,26 +629,26 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
           </div>
           <button
             onClick={onClose}
-            className="text-text-faint cursor-pointer text-base leading-none hover:text-text-secondary transition-colors duration-120"
+            className="text-text-faint cursor-pointer leading-none hover:text-text-secondary transition-colors duration-120"
           >
-            ×
+            <X size={16} strokeWidth={1.75} />
           </button>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <span
-            className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-            style={{ background: accent }}
+          <StatusIcon
+            size={12}
+            strokeWidth={1.9}
+            className={cn("shrink-0", statusVisual.spin && "animate-spin")}
+            style={{ color: statusVisual.color }}
           />
           <span
             className="font-mono text-[10px] font-semibold uppercase tracking-label-wide"
             style={{ color: accent }}
           >
-            {agent.blocked ? "Blocked" : agent.status}
+            {agentStatusLabel(agent)}
           </span>
           <span className="font-mono text-[10px] text-text-faint flex items-center gap-1">
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
-              <path fillRule="evenodd" d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zm-2.25.75a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.492 2.492 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25zM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM4.25 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5z" />
-            </svg>
+            <GitBranch size={10} strokeWidth={1.75} className="opacity-50 shrink-0" />
             {agent.branch}
           </span>
           {modelsUsed.length > 0 && (
@@ -383,51 +703,34 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             <AgentPlanBlock steps={agent.planSteps ?? []} />
 
             <div className="grid grid-cols-2 gap-2.5">
-              <StatCard label="Time" value={agent.time} />
-              <StatCard label="Tokens" value={agent.tokens} />
-              <StatCard label="Files" value={`${agent.files.length}`} />
-              <StatCard
-                label="Progress"
-                value={
-                  (agent.planSteps?.length ?? 0) > 0 ? `${agent.progress}%` : "—"
-                }
-              />
+              <StatCard label="Time" value={getAgentTimeLabel(agent)} />
+              <StatCard label="Tokens" value={getAgentTokenLabel(agent)} />
+              {(agent.planSteps?.length ?? 0) > 0 && (
+                <StatCard label="Progress" value={`${agent.progress}%`} />
+              )}
             </div>
 
-            {/* PR status from GitHub */}
-            {agent.prStatus && (
-              <PrStatusCard
-                prStatus={agent.prStatus}
-                prUrl={agent.prStatus.prUrl}
-              />
-            )}
-
-            {/* Placeholder when there's a PR number but no fetched status yet */}
-            {!agent.prStatus && agent.pr && agent.originUrl && (() => {
-              const m = agent.originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
-              if (!m) return null;
-              const prNum = agent.pr.replace("#", "");
-              const prUrl = `https://github.com/${m[1]}/pull/${prNum}`;
-              return (
-                <div className="border border-border-light rounded-lg overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-2 border-b border-border-light bg-bg-secondary">
-                    <img src="/octicon.svg" alt="" className="w-3 h-3 opacity-40 dark:invert shrink-0" />
-                    <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">PR status</span>
-                    <a
-                      href={prUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-auto font-mono text-[9.5px] text-text-faint hover:text-text-secondary transition-colors duration-120"
-                    >
-                      {agent.pr} ↗
-                    </a>
-                  </div>
-                  <div className="px-3 py-3 text-center">
-                    <span className="font-mono text-[10.5px] text-text-faint">connect GitHub token to see status</span>
-                  </div>
-                </div>
-              );
-            })()}
+            <GitOverviewCard
+              prStatus={agent.prStatus ?? null}
+              prUrl={prUrl}
+              existingPrUrl={existingPrUrl}
+              prActionLabel={prActionLabel}
+              onCommit={() => {
+                setGitError(null);
+                setGitDialog("commit");
+              }}
+              onPush={() => {
+                void runPush();
+              }}
+              onViewPr={() => {
+                void runOpenPr();
+              }}
+              onCreateBranch={() => {
+                setGitError(null);
+                setGitDialog("branch");
+              }}
+              gitDisabled={!canRunGitActions || gitBusy !== null}
+            />
           </div>
         )}
 
@@ -442,7 +745,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
                 agent.messages.map((m, i) =>
                   m.role === "you" ? (
                     <div key={i} className="flex justify-end">
-                      <div className="max-w-[95%] px-4 py-2.5 rounded-full bg-text-primary text-bg-card text-[13px] leading-relaxed whitespace-pre-wrap">
+                      <div className="max-w-[95%] px-2.5 py-2 rounded-[10px] bg-bg-user-message border border-border-user-message text-text-primary text-[13px] leading-relaxed whitespace-pre-wrap">
                         {m.content}
                       </div>
                     </div>
@@ -474,15 +777,13 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               </button>
             )}
 
-            {agent.status !== "deployed" && (
-              <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded shrink-0">
-                <input
-                  placeholder="Quick message..."
-                  className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm"
-                />
-                <span className="kbd-badge cursor-pointer">↵</span>
-              </div>
-            )}
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded shrink-0">
+              <input
+                placeholder="Quick message..."
+                className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm"
+              />
+              <span className="kbd-badge cursor-pointer">↵</span>
+            </div>
           </div>
         )}
 
@@ -510,7 +811,26 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
           {actionError && (
             <p className="text-[11px] text-accent-red leading-snug">{actionError}</p>
           )}
+          {gitError && gitDialog === null ? (
+            <p className="text-[11px] text-accent-red leading-snug">{gitError}</p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={agent.status === "deployed"}
+              onClick={markDone}
+              title="Move this thread to done"
+              className={cn(
+                "inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-[7px] text-[11.5px] font-medium text-white transition-all duration-120",
+                agent.status === "deployed"
+                  ? "opacity-60 cursor-default"
+                  : "cursor-pointer hover:brightness-95",
+              )}
+              style={{ backgroundColor: "#5F6AD3" }}
+            >
+              <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.1} />
+              Done
+            </button>
             <button
               type="button"
               disabled={!canArchive || actionBusy !== null}

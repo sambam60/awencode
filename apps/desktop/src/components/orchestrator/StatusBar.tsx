@@ -14,9 +14,9 @@ export function StatusBar({ agents, onOpenSettings }: StatusBarProps) {
   const toggleTheme = useAppStore((s) => s.toggleTheme);
   const resolvedDark = useResolvedThemeIsDark();
   const view = useViewStore((s) => s.view);
-  const active = agents.filter((a) => a.status === "active").length;
+  const running = agents.filter((a) => a.status === "active").length;
   const review = agents.filter((a) => a.status === "review").length;
-  const blocked = agents.filter((a) => a.blocked).length;
+  const attention = agents.filter((a) => a.blocked).length;
 
   return (
     <div
@@ -35,14 +35,14 @@ export function StatusBar({ agents, onOpenSettings }: StatusBarProps) {
       <div className="flex items-center gap-4">
         <div className="flex gap-4 font-mono text-xs text-text-tertiary">
           <span>
-            <span className="text-accent-blue">{active}</span> active
+            <span className="text-accent-blue">{running}</span> running
           </span>
           <span>
-            <span className="text-accent-amber">{review}</span> review
+            <span style={{ color: "#F4B400" }}>{review}</span> review
           </span>
-          {blocked > 0 && (
+          {attention > 0 && (
             <span>
-              <span className="text-accent-red">{blocked}</span> blocked
+              <span style={{ color: "#FF4700" }}>{attention}</span> attention
             </span>
           )}
         </div>

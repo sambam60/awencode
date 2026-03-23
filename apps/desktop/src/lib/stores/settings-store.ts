@@ -12,6 +12,23 @@ export interface CuratedModelOption {
   description: string;
 }
 
+export function buildAzureDeploymentModels(
+  azureDeployments: string[],
+): CuratedModelOption[] {
+  return Array.from(
+    new Set(
+      azureDeployments
+        .map((deployment) => deployment.trim())
+        .filter(Boolean),
+    ),
+  ).map((deployment) => ({
+    id: deployment,
+    provider: "azure-openai-custom",
+    name: deployment,
+    description: "Your Azure deployment",
+  }));
+}
+
 export function isGptFamilyModelId(modelId: string): boolean {
   return modelId.startsWith("gpt-");
 }
@@ -98,11 +115,8 @@ export const CURATED_MODELS: CuratedModelOption[] = [
 ];
 
 interface SettingsState {
-  openAiApiKey: string;
-  openRouterApiKey: string;
-  azureApiKey: string;
   azureBaseUrl: string;
-  azureDeploymentName: string;
+  azureDeployments: string[];
 
   /** Selected model (must be enabled; store enforces this). */
   selectedModelId: string;
@@ -113,11 +127,9 @@ interface SettingsState {
   /** Enabled models shown as “available” in the UI. */
   enabledModels: Record<string, boolean>;
 
-  setOpenAiApiKey: (value: string) => void;
-  setOpenRouterApiKey: (value: string) => void;
-  setAzureApiKey: (value: string) => void;
   setAzureBaseUrl: (value: string) => void;
-  setAzureDeploymentName: (value: string) => void;
+  addAzureDeployment: (value: string) => boolean;
+  removeAzureDeployment: (value: string) => void;
   setSelectedModelId: (id: string) => void;
   setModelProviderOverride: (modelId: string, provider: ModelProviderId) => void;
   setSelectedReasoningEffort: (effort: ReasoningEffort) => void;
@@ -135,49 +147,61 @@ function defaultEnabledModels(): Record<string, boolean> {
   }, {} as Record<string, boolean>);
 }
 
-function pickFirstEnabled(enabled: Record<string, boolean>): string {
-  const found = CURATED_MODELS.find((m) => enabled[m.id]);
+function pickFirstEnabled(
+  enabled: Record<string, boolean>,
+  azureDeployments: string[],
+): string {
+  const found = [...CURATED_MODELS, ...buildAzureDeploymentModels(azureDeployments)].find(
+    (m) => enabled[m.id],
+  );
   return found?.id ?? DEFAULT_SELECTED_MODEL;
 }
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
-      openRouterApiKey: "",
-      openAiApiKey: "",
-      azureApiKey: "",
       azureBaseUrl: "",
-      azureDeploymentName: "",
+      azureDeployments: [],
 
       selectedModelId: DEFAULT_SELECTED_MODEL,
       modelProviderOverrides: {},
       selectedReasoningEffort: DEFAULT_REASONING_EFFORT,
       enabledModels: defaultEnabledModels(),
 
-      setOpenAiApiKey: (value) => set({ openAiApiKey: value }),
-      setOpenRouterApiKey: (value) => set({ openRouterApiKey: value }),
-      setAzureApiKey: (value) => set({ azureApiKey: value }),
       setAzureBaseUrl: (value) => set({ azureBaseUrl: value }),
-      setAzureDeploymentName: (value) => {
+      addAzureDeployment: (value) => {
         const nextDeployment = value.trim();
-        const prevDeployment = get().azureDeploymentName.trim();
+        if (!nextDeployment) return false;
+        const existing = get().azureDeployments;
+        if (existing.includes(nextDeployment)) return false;
+        set((s) => ({
+          azureDeployments: [...s.azureDeployments, nextDeployment],
+          enabledModels: { ...s.enabledModels, [nextDeployment]: true },
+        }));
+        return true;
+      },
 
+      removeAzureDeployment: (value) => {
+        const target = value.trim();
+        if (!target) return;
         set((s) => {
-          const nextEnabled = { ...s.enabledModels };
-          if (nextDeployment) {
-            nextEnabled[nextDeployment] = true;
+          const azureDeployments = s.azureDeployments.filter(
+            (deployment) => deployment !== target,
+          );
+          const enabledModels = { ...s.enabledModels };
+          delete enabledModels[target];
+          const modelProviderOverrides = { ...s.modelProviderOverrides };
+          delete modelProviderOverrides[target];
+          let selectedModelId = s.selectedModelId;
+          if (selectedModelId === target || !enabledModels[selectedModelId]) {
+            selectedModelId = pickFirstEnabled(enabledModels, azureDeployments);
+            enabledModels[selectedModelId] = true;
           }
-
-          let nextSelected = s.selectedModelId;
-          if (prevDeployment && s.selectedModelId === prevDeployment) {
-            // If user was on the previous Azure deployment, switch selection to the new one.
-            nextSelected = nextDeployment || prevDeployment;
-          }
-
           return {
-            azureDeploymentName: value,
-            enabledModels: nextEnabled,
-            selectedModelId: nextSelected,
+            azureDeployments,
+            enabledModels,
+            modelProviderOverrides,
+            selectedModelId,
           };
         });
       },
@@ -194,14 +218,21 @@ export const useSettingsStore = create<SettingsState>()(
 
       setModelProviderOverride: (modelId, provider) =>
         set((s) => ({
-          modelProviderOverrides: { ...s.modelProviderOverrides, [modelId]: provider },
+          modelProviderOverrides: {
+            ...s.modelProviderOverrides,
+            [modelId]:
+              CURATED_MODELS.some((model) => model.id === modelId) &&
+              provider === "azure-openai-custom"
+                ? "openai"
+                : provider,
+          },
         })),
 
       setModelEnabled: (id, enabled) => {
         const nextEnabled = { ...get().enabledModels, [id]: enabled };
         let nextSelected = get().selectedModelId;
         if (!nextEnabled[nextSelected]) {
-          nextSelected = pickFirstEnabled(nextEnabled);
+          nextSelected = pickFirstEnabled(nextEnabled, get().azureDeployments);
           nextEnabled[nextSelected] = true;
         }
         set({ enabledModels: nextEnabled, selectedModelId: nextSelected });
@@ -210,24 +241,66 @@ export const useSettingsStore = create<SettingsState>()(
       ensureDefaults: () => {
         const enabled = get().enabledModels;
         const merged = { ...defaultEnabledModels(), ...enabled };
-        const deployment = get().azureDeploymentName.trim();
-        if (deployment) {
+        for (const deployment of get().azureDeployments) {
           merged[deployment] = true;
         }
         let selected = get().selectedModelId;
-        if (!merged[selected]) selected = pickFirstEnabled(merged);
+        if (!merged[selected]) selected = pickFirstEnabled(merged, get().azureDeployments);
         set({ enabledModels: merged, selectedModelId: selected });
       },
     }),
     {
       name: "awencode-settings",
-      version: 1,
+      version: 3,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== "object") {
+          return persistedState;
+        }
+
+        const nextState = { ...(persistedState as Record<string, unknown>) };
+        delete nextState.openAiApiKey;
+        delete nextState.openRouterApiKey;
+        delete nextState.azureApiKey;
+        const legacyDeployment =
+          typeof nextState.azureDeploymentName === "string"
+            ? nextState.azureDeploymentName.trim()
+            : "";
+        const rawDeployments = Array.isArray(nextState.azureDeployments)
+          ? nextState.azureDeployments
+          : legacyDeployment
+            ? [legacyDeployment]
+            : [];
+        nextState.azureDeployments = Array.from(
+          new Set(
+            rawDeployments
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => value.trim())
+              .filter(Boolean),
+          ),
+        );
+        delete nextState.azureDeploymentName;
+        if (
+          nextState.modelProviderOverrides &&
+          typeof nextState.modelProviderOverrides === "object"
+        ) {
+          nextState.modelProviderOverrides = Object.fromEntries(
+            Object.entries(nextState.modelProviderOverrides as Record<string, unknown>).filter(
+              ([, provider]) => provider !== "azure-openai-custom",
+            ),
+          );
+        }
+        if (
+          typeof nextState.selectedModelId === "string" &&
+          !CURATED_MODELS.some((model) => model.id === nextState.selectedModelId) &&
+          !(nextState.azureDeployments as string[]).includes(nextState.selectedModelId)
+        ) {
+          nextState.selectedModelId = DEFAULT_SELECTED_MODEL;
+        }
+        return nextState;
+      },
       partialize: (s) => ({
-        openAiApiKey: s.openAiApiKey,
-        openRouterApiKey: s.openRouterApiKey,
-        azureApiKey: s.azureApiKey,
         azureBaseUrl: s.azureBaseUrl,
-        azureDeploymentName: s.azureDeploymentName,
+        azureDeployments: s.azureDeployments,
         selectedModelId: s.selectedModelId,
         modelProviderOverrides: s.modelProviderOverrides,
         selectedReasoningEffort: s.selectedReasoningEffort,
@@ -238,39 +311,20 @@ export const useSettingsStore = create<SettingsState>()(
 );
 
 export function getSelectedModel(): CuratedModelOption {
-  const { selectedModelId, modelProviderOverrides, azureDeploymentName } =
+  const { selectedModelId, modelProviderOverrides, azureDeployments } =
     useSettingsStore.getState();
+  const azureModels = buildAzureDeploymentModels(azureDeployments);
+  const deploymentMatch = azureModels.find((model) => model.id === selectedModelId);
+  if (deploymentMatch) {
+    return deploymentMatch;
+  }
 
   const curatedBase =
     CURATED_MODELS.find((m) => m.id === selectedModelId) ?? CURATED_MODELS[0];
-  const azureDeployment = azureDeploymentName.trim();
-
-  // If the user selected the Azure deployment itself, route directly to it.
-  if (azureDeployment && selectedModelId === azureDeployment) {
-    return {
-      id: azureDeployment,
-      provider: "azure-openai-custom",
-      name: azureDeployment,
-      description: "Your Azure deployment",
-    };
-  }
 
   const override = modelProviderOverrides[selectedModelId];
-  let provider = override ?? curatedBase.provider;
-  // Back-compat: older persisted settings used the reserved built-in provider id.
-  if (provider === ("azure-openai" as any)) {
-    provider = "azure-openai-custom";
-  }
-
-  // Translate model id for provider-specific routing
-  if (provider === "azure-openai-custom" && isGptFamilyModelId(curatedBase.id)) {
-    // For Azure, Codex expects the actual deployment name as `model`.
-    return {
-      ...curatedBase,
-      provider,
-      id: azureDeployment || curatedBase.id,
-    };
-  }
+  const provider =
+    override && override !== "azure-openai-custom" ? override : curatedBase.provider;
 
   return { ...curatedBase, provider };
 }

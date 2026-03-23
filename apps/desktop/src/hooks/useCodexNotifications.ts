@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
+import { formatCompactCount, parseUnifiedDiff } from "@/lib/agent-metrics";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import type {
@@ -46,14 +47,21 @@ function planStepsFromParams(plan: unknown): AgentPlanStep[] {
   });
 }
 
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+const SHELL_CMD_MAX = 8_000;
+const SHELL_OUTPUT_MAX = 150_000;
+
 /** Derive a human-readable label + kind from a tool name / notification method. */
-function classifyTool(toolName: string, input?: unknown): { kind: ActivityKind; label: string; detail?: string } {
+function classifyTool(toolName: string, input?: unknown): { kind: ActivityKind; label: string; detail?: string; shellCommand?: string } {
   const name = toolName.toLowerCase();
   const inputStr = typeof input === "string" ? input : input ? JSON.stringify(input) : undefined;
 
   if (name.includes("shell") || name === "bash" || name === "run_command") {
-    const cmd = inputStr ? inputStr.slice(0, 80) : "";
-    return { kind: "shell", label: "shell", detail: cmd };
+    const cmd = inputStr ? inputStr.slice(0, SHELL_CMD_MAX) : "";
+    return { kind: "shell", label: "shell", shellCommand: cmd || undefined };
   }
   if (name.includes("read") || name.includes("view") || name.includes("cat")) {
     const file = inputStr ? inputStr.replace(/^["'{]?/, "").slice(0, 60) : "";
@@ -70,11 +78,11 @@ function classifyTool(toolName: string, input?: unknown): { kind: ActivityKind; 
 }
 
 /** Derive an activity from a ThreadItem. */
-function activityFromItem(item: Record<string, unknown>): { kind: ActivityKind; label: string; detail?: string } | null {
+function activityFromItem(item: Record<string, unknown>): { kind: ActivityKind; label: string; detail?: string; shellCommand?: string } | null {
   const type = item.type as string | undefined;
   if (type === "commandExecution") {
     const cmd = typeof item.command === "string" ? item.command : "";
-    return { kind: "shell", label: "shell", detail: cmd.slice(0, 80) };
+    return { kind: "shell", label: "shell", shellCommand: cmd.slice(0, SHELL_CMD_MAX) || undefined };
   }
   if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];
@@ -110,6 +118,9 @@ export function useCodexNotifications() {
   const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
   const setAgentPlan = useThreadStore((s) => s.setAgentPlan);
   const setAgentCurrentTurnId = useThreadStore((s) => s.setAgentCurrentTurnId);
+  const setAgentTurnTiming = useThreadStore((s) => s.setAgentTurnTiming);
+  const updateAgentUsage = useThreadStore((s) => s.updateAgentUsage);
+  const updateAgentDiff = useThreadStore((s) => s.updateAgentDiff);
   const addAgentModel = useThreadStore((s) => s.addAgentModel);
 
   useEffect(() => {
@@ -174,8 +185,41 @@ export function useCodexNotifications() {
           const turn = params.turn as Record<string, unknown> | undefined;
           const turnId = typeof turn?.id === "string" ? turn.id : null;
           setAgentCurrentTurnId(agentId, turnId);
+          setAgentTurnTiming(agentId, {
+            lastTurnStartedAt: Date.now(),
+            lastTurnDurationMs: null,
+          });
+          updateAgentDiff(agentId, null, []);
           setAgentTurnInProgress(agentId, true);
           setAgentStatus(agentId, "active");
+          break;
+        }
+
+        case "thread/tokenUsage/updated": {
+          const tokenUsage = params.tokenUsage as Record<string, unknown> | undefined;
+          const total = tokenUsage?.total as Record<string, unknown> | undefined;
+          const totalTokens = readNumber(total?.totalTokens);
+          const modelContextWindow = readNumber(tokenUsage?.modelContextWindow);
+          const contextUsagePercent =
+            totalTokens != null &&
+            modelContextWindow != null &&
+            modelContextWindow > 0
+              ? (totalTokens / modelContextWindow) * 100
+              : null;
+          updateAgentUsage(agentId, {
+            tokens:
+              totalTokens != null ? formatCompactCount(totalTokens) : undefined,
+            totalTokens,
+            modelContextWindow,
+            contextUsagePercent,
+          });
+          break;
+        }
+
+        case "turn/diff/updated": {
+          const diff = typeof params.diff === "string" ? params.diff : "";
+          const parsed = parseUnifiedDiff(diff);
+          updateAgentDiff(agentId, diff || null, parsed.files);
           break;
         }
 
@@ -198,6 +242,12 @@ export function useCodexNotifications() {
         }
 
         case "turn/completed": {
+          const startedAt =
+            useThreadStore.getState().agents.find((a) => a.id === agentId)
+              ?.lastTurnStartedAt ?? null;
+          setAgentTurnTiming(agentId, {
+            lastTurnDurationMs: startedAt != null ? Date.now() - startedAt : null,
+          });
           finalizeAgentThinking(agentId);
           flushAgentStreamingBuffer(agentId);
           setAgentTurnInProgress(agentId, false);
@@ -219,6 +269,7 @@ export function useCodexNotifications() {
               kind: info.kind,
               label: info.label,
               detail: info.detail,
+              shellCommand: info.shellCommand,
               status: "running",
               startedAt: Date.now(),
             });
@@ -251,10 +302,11 @@ export function useCodexNotifications() {
             const act = agent?.activities?.find((a) => a.id === itemId);
             if (act) {
               const existing = act.detail ?? "";
-              const combined = existing + delta;
-              updateAgentActivity(agentId, itemId, {
-                detail: combined.slice(-200),
-              });
+              let combined = existing + delta;
+              if (combined.length > SHELL_OUTPUT_MAX) {
+                combined = combined.slice(-SHELL_OUTPUT_MAX);
+              }
+              updateAgentActivity(agentId, itemId, { detail: combined });
             }
           }
           break;
@@ -332,6 +384,26 @@ export function useCodexNotifications() {
           break;
         }
 
+        case "error": {
+          // Fatal turn error (willRetry: false) — reset in-progress state so
+          // the agent doesn't stay stuck in "active" indefinitely.
+          const willRetry = params.willRetry;
+          if (!willRetry) {
+            const startedAt =
+              useThreadStore.getState().agents.find((a) => a.id === agentId)
+                ?.lastTurnStartedAt ?? null;
+            setAgentTurnTiming(agentId, {
+              lastTurnDurationMs: startedAt != null ? Date.now() - startedAt : null,
+            });
+            flushAgentStreamingBuffer(agentId);
+            finalizeAgentThinking(agentId);
+            setAgentTurnInProgress(agentId, false);
+            setAgentCurrentTurnId(agentId, null);
+            setAgentStatus(agentId, "review");
+          }
+          break;
+        }
+
         // ─── Legacy tool call events (fallback) ──────────────────
 
         case "item/toolCall/created":
@@ -342,12 +414,13 @@ export function useCodexNotifications() {
           const toolName = typeof params.name === "string" ? params.name
             : typeof params.tool === "string" ? params.tool
             : "tool";
-          const { kind, label, detail } = classifyTool(toolName, params.input ?? params.arguments);
+          const { kind, label, detail, shellCommand } = classifyTool(toolName, params.input ?? params.arguments);
           addAgentActivity(agentId, {
             id: callId,
             kind,
             label,
             detail,
+            shellCommand,
             status: "running",
             startedAt: Date.now(),
           });
@@ -412,6 +485,9 @@ export function useCodexNotifications() {
     updateAgentTitle,
     setAgentPlan,
     setAgentCurrentTurnId,
+    setAgentTurnTiming,
+    updateAgentUsage,
+    updateAgentDiff,
     addAgentModel,
   ]);
 

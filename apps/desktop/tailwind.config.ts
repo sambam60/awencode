@@ -11,11 +11,13 @@ const config: Config = {
           secondary: "var(--bg-secondary)",
           card: "var(--bg-card)",
           input: "var(--bg-input)",
+          "user-message": "var(--user-message-bg)",
         },
         border: {
           DEFAULT: "var(--border-default)",
           light: "var(--border-light)",
           focus: "var(--border-focus)",
+          "user-message": "var(--user-message-border)",
         },
         text: {
           primary: "var(--text-primary)",

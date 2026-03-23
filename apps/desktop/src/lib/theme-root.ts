@@ -1,4 +1,4 @@
-/** Must match `id` on `ThemeClassRoot` in App — portals here inherit `.dark` and design tokens. */
+/** Must match `id` on `ThemeClassRoot` in App. Theme uses `document.documentElement.classList.toggle("dark")`; portals mount here so they stay inside the app subtree. */
 export const THEME_ROOT_ELEMENT_ID = "awencode-theme-root";
 
 export function getThemePortalContainer(): HTMLElement {

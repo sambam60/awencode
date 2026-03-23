@@ -52,7 +52,7 @@ export function CommandBar() {
             <div className="border-t border-border-light px-4.5 py-2.5">
               <div className="font-mono text-xs text-text-faint leading-relaxed">
                 "deploy the chart fix" · "what's blocking migration?" · "pause
-                all active"
+                all running"
               </div>
             </div>
           </Command.List>
