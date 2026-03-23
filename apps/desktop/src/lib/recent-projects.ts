@@ -5,6 +5,7 @@ export interface RecentProject {
   name: string;
   path: string;
   lastOpened: number;
+  pinned?: boolean;
 }
 
 function load(): RecentProject[] {
@@ -42,7 +43,18 @@ export function getRecentProjects(): RecentProject[] {
 
 export function addRecentProject(path: string, name: string): void {
   const projects = load();
+  const existing = projects.find((p) => p.path === path);
   const updated = projects.filter((p) => p.path !== path);
-  updated.unshift({ name, path, lastOpened: Date.now() });
+  updated.unshift({ name, path, lastOpened: Date.now(), pinned: existing?.pinned });
   save(updated);
+}
+
+export function removeRecentProject(path: string): void {
+  const projects = load();
+  save(projects.filter((p) => p.path !== path));
+}
+
+export function togglePinRecentProject(path: string): void {
+  const projects = load();
+  save(projects.map((p) => (p.path === path ? { ...p, pinned: !p.pinned } : p)));
 }

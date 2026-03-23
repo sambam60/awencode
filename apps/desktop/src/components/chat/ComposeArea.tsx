@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { Plus, ChevronDown, Mic, ArrowUp, X, Image } from "lucide-react";
+import { Plus, ChevronDown, Mic, ArrowUp, X, Image, Square } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { getThemePortalContainer } from "@/lib/theme-root";
@@ -59,6 +59,12 @@ interface ComposeAreaProps {
   onCancelPromptEdit?: () => void;
   /** `thread` = inline in transcript (morphs from bubble radius into compose card). */
   placement?: "dock" | "thread";
+  /** True while a turn is in progress — swaps the send button for a stop button. */
+  isRunning?: boolean;
+  /** Called when the user clicks the stop button. */
+  onStop?: () => void;
+  /** True while a stop request is in flight. */
+  stopping?: boolean;
 }
 
 const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
@@ -158,6 +164,9 @@ export function ComposeArea({
   onPromptEditSubmit,
   onCancelPromptEdit,
   placement = "dock",
+  isRunning = false,
+  onStop,
+  stopping = false,
 }: ComposeAreaProps) {
   const setComposeDraft = useChatUiStore((s) => s.setComposeDraft);
   const [value, setValue] = useState(() =>
@@ -690,21 +699,33 @@ export function ComposeArea({
             <Mic size={15} strokeWidth={1.5} />
           </button>
 
-          {/* Send — always visible, grey when empty, black when ready */}
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!canSend}
-            className={cn(
-              "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
-              canSend
-                ? "bg-text-primary text-bg-card hover:opacity-90"
-                : "bg-bg-secondary text-text-faint",
-            )}
-            aria-label="Send"
-          >
-            <ArrowUp size={15} strokeWidth={2} />
-          </button>
+          {/* Send / Stop — stop replaces send while a turn is in-flight */}
+          {isRunning ? (
+            <button
+              type="button"
+              onClick={onStop}
+              disabled={stopping}
+              className="w-7 h-7 rounded-full flex items-center justify-center bg-bg-secondary border border-border-default text-text-primary transition-colors duration-200 cursor-pointer disabled:opacity-50 hover:border-border-focus"
+              aria-label="Stop"
+            >
+              <Square size={10} fill="currentColor" strokeWidth={0} className="rounded-[1px]" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSend}
+              className={cn(
+                "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
+                canSend
+                  ? "bg-text-primary text-bg-card hover:opacity-90"
+                  : "bg-bg-secondary text-text-faint",
+              )}
+              aria-label="Send"
+            >
+              <ArrowUp size={15} strokeWidth={2} />
+            </button>
+          )}
         </div>
       </div>
     </div>

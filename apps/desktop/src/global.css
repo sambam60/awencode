@@ -138,6 +138,12 @@
   --user-message-bg: #fafbfc;
   --user-message-border: #e8eaed;
 
+  /* Shell activity rows — slightly darker than canvas */
+  --shell-surface-bg: #edeef1;
+  --shell-surface-border: #d8dbe0;
+  --shell-text: #3a3d44;
+  --shell-text-muted: #6b6f76;
+
   --border-default: #d8dadd;
   --border-light: #e4e5e8;
   --border-focus: #959ba7;
@@ -168,6 +174,11 @@
   /* Lighter than primary / card so the bubble reads as a soft elevation */
   --user-message-bg: #34353d;
   --user-message-border: #4a4c56;
+
+  --shell-surface-bg: #141418;
+  --shell-surface-border: #2a2a2e;
+  --shell-text: #ececee;
+  --shell-text-muted: #6b6f76;
 
   --border-default: #383840;
   --border-light: #32323a;

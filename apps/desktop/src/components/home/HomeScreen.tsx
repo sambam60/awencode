@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CornerDownLeft, X } from "lucide-react";
+import { CornerDownLeft, X, Pin } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import {
   getRecentProjects,
   addRecentProject,
+  removeRecentProject,
+  togglePinRecentProject,
   type RecentProject as RecentProjectType,
 } from "@/lib/recent-projects";
 
@@ -80,6 +82,16 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
     addRecentProject(project.path, project.name);
     setRecentProjects(getRecentProjects());
     onOpenProject();
+  };
+
+  const handlePin = (project: RecentProjectType) => {
+    togglePinRecentProject(project.path);
+    setRecentProjects(getRecentProjects());
+  };
+
+  const handleRemove = (project: RecentProjectType) => {
+    removeRecentProject(project.path);
+    setRecentProjects(getRecentProjects());
   };
 
   return (
@@ -254,20 +266,49 @@ export function HomeScreen({ onOpenProject }: HomeScreenProps) {
                   No recent projects
                 </span>
               ) : (
-                recentProjects.map((project) => (
-                  <button
-                    key={`${project.path}-${project.lastOpened}`}
-                    onClick={() => openRecent(project)}
-                    className="flex items-center justify-between w-full px-2 py-2 text-left cursor-pointer group transition-all duration-120 rounded-md hover:bg-bg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
-                  >
-                    <span className="text-[13px] font-medium text-text-primary">
-                      {project.name}
-                    </span>
-                    <span className="text-[10.5px] text-text-faint truncate max-w-[180px]">
-                      {project.path}
-                    </span>
-                  </button>
-                ))
+                recentProjects
+                  .slice()
+                  .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                  .map((project) => (
+                    <div
+                      key={`${project.path}-${project.lastOpened}`}
+                      className="flex items-center w-full group rounded-md hover:bg-bg-secondary transition-all duration-120"
+                    >
+                      <button
+                        onClick={() => openRecent(project)}
+                        className="flex items-center gap-2 flex-1 min-w-0 px-2 py-2 text-left cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue rounded-md"
+                      >
+                        <span className="text-[13px] font-medium text-text-primary shrink-0">
+                          {project.name}
+                        </span>
+                        <span className="text-[10.5px] text-text-faint truncate flex-1 text-right">
+                          {project.path}
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-0.5 pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-120 shrink-0">
+                        <button
+                          type="button"
+                          title={project.pinned ? "Unpin" : "Pin"}
+                          onClick={() => handlePin(project)}
+                          className="inline-flex h-5 w-5 items-center justify-center text-text-faint hover:text-text-secondary transition-colors duration-120 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue rounded"
+                        >
+                          <Pin
+                            size={11}
+                            strokeWidth={1.6}
+                            className={project.pinned ? "fill-current" : ""}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          title="Remove"
+                          onClick={() => handleRemove(project)}
+                          className="inline-flex h-5 w-5 items-center justify-center text-text-faint hover:text-text-secondary transition-colors duration-120 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue rounded"
+                        >
+                          <X size={11} strokeWidth={1.6} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
               )}
             </div>
           </div>

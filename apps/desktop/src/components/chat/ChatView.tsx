@@ -30,6 +30,7 @@ import {
   Check,
   FolderTree,
   Undo2,
+  Square,
 } from "lucide-react";
 import { ComposeArea, type Attachment } from "./ComposeArea";
 import { CodeBlock } from "./CodeBlock";
@@ -796,8 +797,8 @@ function shellCommandBins(cmd: string): string {
   return bins.join(", ");
 }
 
-/** Shell / bash — compact bar; chevron on hover; expand for mono output. */
-function ShellActivityRow({ activity }: { activity: AgentActivity }) {
+/** Single shell command row — borderless, rendered inside a group card. */
+function ShellActivityRow({ activity, isLast }: { activity: AgentActivity; isLast?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
@@ -830,26 +831,25 @@ function ShellActivityRow({ activity }: { activity: AgentActivity }) {
   );
 
   return (
-    <div className="mb-1.5 rounded-lg border border-[#2a2a2e] overflow-hidden bg-[#141418] shadow-[0_1px_3px_rgba(0,0,0,0.1)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.35)]">
-      <div className="group/shell-header flex min-h-[36px] items-stretch">
-        <button
-          type="button"
-          disabled={!canExpand}
-          onClick={() => canExpand && setExpanded((v) => !v)}
-          aria-expanded={canExpand ? expanded : undefined}
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left transition-colors duration-120",
-            canExpand
-              ? "cursor-pointer hover:bg-white/[0.04]"
-              : "cursor-default",
-          )}
-        >
+    <div className={cn(!isLast && "border-b border-border-shell-surface")}>
+      <div
+        className={cn(
+          "group/shell-header flex min-h-[32px] items-stretch transition-colors duration-120",
+          canExpand
+            ? "cursor-pointer hover:bg-[rgba(0,0,0,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)]"
+            : "",
+        )}
+        onClick={() => canExpand && setExpanded((v) => !v)}
+        role={canExpand ? "button" : undefined}
+        aria-expanded={canExpand ? expanded : undefined}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5">
           {canExpand ? (
             <ChevronRight
-              size={14}
+              size={12}
               strokeWidth={2}
               className={cn(
-                "shrink-0 text-[#7a7d84] transition-all duration-150",
+                "shrink-0 text-shell-text-muted transition-all duration-150",
                 expanded
                   ? "rotate-90 opacity-100"
                   : "rotate-0 opacity-0 group-hover/shell-header:opacity-100 group-focus-within/shell-header:opacity-100",
@@ -857,68 +857,110 @@ function ShellActivityRow({ activity }: { activity: AgentActivity }) {
               aria-hidden
             />
           ) : (
-            <span className="w-[14px] shrink-0" aria-hidden />
+            <span className="w-3 shrink-0" aria-hidden />
           )}
           <Terminal
-            size={12}
+            size={11}
             strokeWidth={2}
-            className="shrink-0 text-[#b8bbc0]"
+            className="shrink-0 text-text-faint"
             aria-hidden
           />
           <div className="min-w-0 flex-1 flex items-center gap-2">
-            <span className="truncate font-sans text-[12.5px] leading-tight text-[#ececee]">
+            <span className="truncate font-sans text-[12px] leading-tight text-shell-text">
               {commandLine.trim() ? commandLine : "—"}
             </span>
             {bins ? (
-              <span className="shrink-0 font-sans text-[11px] leading-tight text-[#6b6f76]">
+              <span className="shrink-0 font-sans text-[10.5px] leading-tight text-shell-text-muted">
                 {bins}
               </span>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1.5 pl-1">
             {isRunning ? (
-              <Loader2 size={11} className="text-[#5b8fd9] animate-spin" />
+              <Loader2 size={10} className="text-accent-blue animate-spin" />
             ) : null}
             {!isRunning && activity.durationMs !== undefined ? (
-              <span className="font-sans text-[10px] tabular-nums text-[#6b6f76]">
+              <span className="font-sans text-[9.5px] tabular-nums text-shell-text-muted">
                 {activity.durationMs < 1000
                   ? `${activity.durationMs}ms`
                   : `${(activity.durationMs / 1000).toFixed(1)}s`}
               </span>
             ) : null}
           </div>
-        </button>
+        </div>
         {commandLine.trim() ? (
           <button
             type="button"
-            onClick={handleCopy}
+            onClick={(e) => { e.stopPropagation(); handleCopy(e); }}
             title="Copy command and output"
             aria-label="Copy command and output"
             className={cn(
-              "flex items-center justify-center px-2.5 transition-all duration-150",
-              "text-[#6b6f76] hover:text-[#b8bbc0]",
+              "flex items-center justify-center px-2 transition-all duration-150",
+              "text-shell-text-muted hover:text-shell-text",
               "opacity-0 group-hover/shell-header:opacity-100 group-focus-within/shell-header:opacity-100",
             )}
           >
             {copied ? (
-              <Check size={13} strokeWidth={2.2} className="text-[#4aad6e]" />
+              <Check size={12} strokeWidth={2.2} className="text-accent-green" />
             ) : (
-              <Copy size={13} strokeWidth={2} />
+              <Copy size={12} strokeWidth={2} />
             )}
           </button>
         ) : null}
       </div>
       {expanded && canExpand ? (
-        <div className="border-t border-[#2a2a2e] px-3 py-2.5">
+        <div className="border-t border-border-shell-surface px-3 py-2">
           {expandedContent ? (
-            <pre className="font-mono text-[11.5px] leading-relaxed text-[#9b9ea4] whitespace-pre-wrap [overflow-wrap:anywhere]">
+            <pre className="font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
               {expandedContent}
             </pre>
           ) : isRunning ? (
-            <span className="font-mono text-[11.5px] text-[#6b6f76]">…</span>
+            <span className="font-mono text-[11px] text-shell-text-muted">…</span>
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const SHELL_COLLAPSE_THRESHOLD = 3;
+
+/** Wraps consecutive shell activities in one card; auto-collapses older ones. */
+function ShellActivityGroup({ activities }: { activities: AgentActivity[] }) {
+  const collapsible = activities.length > SHELL_COLLAPSE_THRESHOLD;
+  const [expanded, setExpanded] = useState(false);
+  const hiddenCount = activities.length - SHELL_COLLAPSE_THRESHOLD;
+  const visible = collapsible && !expanded
+    ? activities.slice(activities.length - SHELL_COLLAPSE_THRESHOLD)
+    : activities;
+
+  return (
+    <div className="mb-1.5 rounded-lg border border-border-shell-surface overflow-hidden bg-bg-shell-surface shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.35)]">
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-shell-text-muted hover:text-shell-text transition-colors duration-120 cursor-pointer border-b border-border-shell-surface"
+        >
+          <ChevronDown
+            size={10}
+            strokeWidth={2}
+            className={cn("transition-transform duration-150", expanded && "rotate-180")}
+          />
+          <span className="font-sans text-[11px]">
+            {expanded
+              ? "Collapse"
+              : `${hiddenCount} earlier command${hiddenCount === 1 ? "" : "s"}`}
+          </span>
+        </button>
+      )}
+      {visible.map((act, i) => (
+        <ShellActivityRow
+          key={act.id}
+          activity={act}
+          isLast={i === visible.length - 1}
+        />
+      ))}
     </div>
   );
 }
@@ -928,16 +970,31 @@ function ActivityFeed({ activities }: { activities: AgentActivity[] }) {
   const toolActs = activities.filter((a) => !isThinkingActivity(a));
   if (thinkingActs.length === 0 && toolActs.length === 0) return null;
 
+  /** Group consecutive shell activities into runs. */
+  const groups: Array<{ kind: "shell"; items: AgentActivity[] } | { kind: "tool"; item: AgentActivity }> = [];
+  for (const act of toolActs) {
+    if (act.kind === "shell") {
+      const last = groups[groups.length - 1];
+      if (last?.kind === "shell") {
+        last.items.push(act);
+      } else {
+        groups.push({ kind: "shell", items: [act] });
+      }
+    } else {
+      groups.push({ kind: "tool", item: act });
+    }
+  }
+
   return (
     <div className="mb-2">
       {thinkingActs.map((act) => (
         <ThinkingCard key={act.id} activity={act} />
       ))}
-      {toolActs.map((act) =>
-        act.kind === "shell" ? (
-          <ShellActivityRow key={act.id} activity={act} />
+      {groups.map((g) =>
+        g.kind === "shell" ? (
+          <ShellActivityGroup key={g.items[0].id} activities={g.items} />
         ) : (
-          <ToolReasoningRow key={act.id} activity={act} />
+          <ToolReasoningRow key={g.item.id} activity={g.item} />
         ),
       )}
     </div>
@@ -1878,35 +1935,38 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           >
             <img src="/newchat_icon.svg" alt="" className="h-2.5 w-2.5 shrink-0 dark:invert" />
           </button>
+        </div>
+
+        <div className="h-4 w-px bg-border-light shrink-0" />
+
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
             onClick={() => {
               discardBlankQueuedAgent();
               onBack();
             }}
-            className="inline-flex h-7 items-center gap-1 rounded px-2 text-text-faint hover:text-text-secondary hover:bg-bg-secondary cursor-pointer transition-colors duration-120"
+            className="flex items-center gap-1.5 shrink-0 rounded px-1 -mx-1 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer group/title-back"
             title="Back to board"
           >
-            <ChevronLeft size={12} className="shrink-0" strokeWidth={2} />
-            <span className="font-sans text-[10px] leading-none">Back</span>
-          </button>
-        </div>
-
-        <div className="h-4 w-px bg-border-light shrink-0" />
-
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {appProjectName ? (
-            <>
-              <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate max-w-[min(200px,30vw)] shrink min-w-0">
+            <ChevronLeft
+              size={13}
+              strokeWidth={2}
+              className="shrink-0 text-text-faint group-hover/title-back:text-text-secondary transition-colors duration-120"
+            />
+            {appProjectName ? (
+              <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate max-w-[min(200px,30vw)]">
                 {appProjectName}
               </span>
-              <span
-                className="font-sans text-[13px] font-medium text-text-tertiary tracking-[-0.01em] leading-tight shrink-0"
-                aria-hidden
-              >
-                /
-              </span>
-            </>
+            ) : null}
+          </button>
+          {appProjectName ? (
+            <span
+              className="font-sans text-[13px] font-medium text-text-tertiary tracking-[-0.01em] leading-tight shrink-0"
+              aria-hidden
+            >
+              /
+            </span>
           ) : null}
           <StatusIcon
             size={12}
@@ -2302,6 +2362,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                 disabled={stopping || !agent.currentTurnId}
                 className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-bg-card border border-border-default hover:border-border-focus transition-colors duration-150 cursor-pointer disabled:opacity-50 ml-auto"
               >
+                <Square size={8} fill="currentColor" strokeWidth={0} className="text-text-tertiary" />
                 <span className="font-sans text-[12px] text-text-secondary">
                   {stopping ? "Stopping…" : "Stop"}
                 </span>
@@ -2333,6 +2394,9 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             emptyThread={
               agent.messages.length === 0 && !agent.streamingBuffer
             }
+            isRunning={isRunning}
+            onStop={handleStop}
+            stopping={stopping}
           />
         ) : null}
         {!canCompose ? (

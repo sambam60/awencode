@@ -619,8 +619,6 @@ export function FileTreeView({
   );
   if (!open) return null;
 
-  const displayName = projectName || projectPath?.split("/").pop() || "Project";
-
   return (
     <div
       ref={panelRef}
@@ -629,12 +627,9 @@ export function FileTreeView({
     >
       {/* Header */}
       <div className="h-[22px] shrink-0 flex items-center pl-[16px] pr-[6px] group/header">
-        <div className="flex items-center min-w-0 gap-[10px] flex-1">
-          <span className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.04em] text-text-secondary truncate">
-            {displayName}
-          </span>
-          {branch && (
-            <div className="flex min-w-0 flex-1 items-center gap-[8px]">
+        <div className="flex items-center min-w-0 gap-[8px] flex-1">
+          {branch ? (
+            <>
               <span
                 aria-hidden
                 className="w-[5px] h-[5px] shrink-0 rounded-full"
@@ -646,7 +641,11 @@ export function FileTreeView({
               >
                 {branch}
               </span>
-            </div>
+            </>
+          ) : (
+            <span className="min-w-0 font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-tertiary truncate">
+              Explorer
+            </span>
           )}
         </div>
         <div className="flex items-center gap-0 opacity-0 group-hover/header:opacity-100 transition-opacity duration-100">

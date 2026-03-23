@@ -12,13 +12,17 @@ const config: Config = {
           card: "var(--bg-card)",
           input: "var(--bg-input)",
           "user-message": "var(--user-message-bg)",
+          "shell-surface": "var(--shell-surface-bg)",
         },
         border: {
           DEFAULT: "var(--border-default)",
           light: "var(--border-light)",
           focus: "var(--border-focus)",
           "user-message": "var(--user-message-border)",
+          "shell-surface": "var(--shell-surface-border)",
         },
+        "shell-text": "var(--shell-text)",
+        "shell-text-muted": "var(--shell-text-muted)",
         text: {
           primary: "var(--text-primary)",
           secondary: "var(--text-secondary)",
