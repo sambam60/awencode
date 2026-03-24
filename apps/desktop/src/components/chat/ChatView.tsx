@@ -1034,6 +1034,7 @@ function GitButton({
   const [open, setOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
+  const [commitBusy, setCommitBusy] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [gitError, setGitError] = useState<string | null>(null);
@@ -1056,8 +1057,9 @@ function GitButton({
   }, [projectPath, branch]);
 
   const handleCommit = async () => {
-    if (!projectPath || !commitMessage.trim()) return;
+    if (!projectPath || commitBusy) return;
     setGitError(null);
+    setCommitBusy(true);
     try {
       await invoke("git_commit", {
         path: projectPath,
@@ -1069,6 +1071,8 @@ function GitButton({
       onGitAction();
     } catch (e) {
       setGitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCommitBusy(false);
     }
   };
 
@@ -1266,8 +1270,9 @@ function GitButton({
               value={commitMessage}
               onChange={(e) => setCommitMessage(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCommit()}
-              placeholder="Describe your changes..."
-              className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
+              placeholder="Leave empty to auto-generate..."
+              disabled={commitBusy}
+              className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3 disabled:opacity-60"
             />
             {gitError && (
               <p className="text-[11px] text-accent-red mb-2">{gitError}</p>
@@ -1275,16 +1280,21 @@ function GitButton({
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setCommitOpen(false)}
-                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary"
+                disabled={commitBusy}
+                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCommit}
-                disabled={!commitMessage.trim()}
+                disabled={commitBusy}
                 className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 disabled:opacity-50"
               >
-                Commit
+                {commitBusy
+                  ? commitMessage.trim()
+                    ? "Committing\u2026"
+                    : "Generating\u2026"
+                  : "Commit"}
               </button>
             </div>
           </div>

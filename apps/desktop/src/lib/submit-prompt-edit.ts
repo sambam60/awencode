@@ -1,10 +1,18 @@
 import type { Attachment } from "@/components/chat/ComposeArea";
 import { rpcRequest } from "@/lib/rpc-client";
 import { sendChatTurn } from "@/lib/send-chat-turn";
+import { useAppStore } from "@/lib/stores/app-store";
+import { getSelectedModel } from "@/lib/stores/settings-store";
 import { useThreadStore, type AgentMessage } from "@/lib/stores/thread-store";
 
 function countUserMessagesFrom(messages: AgentMessage[], fromIndex: number): number {
   return messages.slice(fromIndex).filter((m) => m.role === "you").length;
+}
+
+function isThreadNotFound(error: unknown): boolean {
+  const msg =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return msg.toLowerCase().includes("thread not found");
 }
 
 /**
@@ -28,7 +36,22 @@ export async function submitPromptEditRevert(
     try {
       await rpcRequest("thread/rollback", { threadId, numTurns });
     } catch (e) {
-      console.error("thread/rollback failed", e);
+      if (isThreadNotFound(e)) {
+        try {
+          const projectPath = useAppStore.getState().projectPath;
+          await rpcRequest("thread/resume", {
+            threadId,
+            cwd: projectPath ?? undefined,
+            model: getSelectedModel().id,
+            modelProvider: getSelectedModel().provider,
+          });
+          await rpcRequest("thread/rollback", { threadId, numTurns });
+        } catch (resumeErr) {
+          console.error("thread/rollback failed after auto-resume", resumeErr);
+        }
+      } else {
+        console.error("thread/rollback failed", e);
+      }
     }
   }
 

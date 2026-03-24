@@ -382,10 +382,37 @@ export async function sendChatTurn(
         effort: getSelectedReasoningEffort(),
       });
 
+    const resumeThreadIfNeeded = async (error: unknown): Promise<boolean> => {
+      const msg = extractErrorMessage(error);
+      if (!msg.toLowerCase().includes("thread not found")) return false;
+      try {
+        await rpcRequest("thread/resume", {
+          threadId,
+          cwd: projectPath ?? undefined,
+          model: getSelectedModel().id,
+          modelProvider: getSelectedModel().provider,
+        });
+        return true;
+      } catch (resumeError) {
+        console.error("thread/resume failed during auto-resume", resumeError);
+        return false;
+      }
+    };
+
     try {
       await startTurn();
     } catch (e) {
       console.error("turn/start failed", e);
+
+      if (await resumeThreadIfNeeded(e)) {
+        try {
+          await startTurn();
+          return;
+        } catch (retryAfterResume) {
+          console.error("turn/start failed after auto-resume", retryAfterResume);
+        }
+      }
+
       if (!(await tryOpenAiFallback(e))) {
         if (await tryProviderCredentialRefresh(e)) {
           try {
