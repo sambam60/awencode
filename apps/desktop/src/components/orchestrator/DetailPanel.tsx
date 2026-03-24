@@ -400,6 +400,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const removeAgent = useThreadStore((s) => s.removeAgent);
   const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
+  const updateAgentPrStatus = useThreadStore((s) => s.updateAgentPrStatus);
   const projectPath = useAppStore((s) => s.projectPath);
   const accent = statusColor(agent);
   const statusVisual = agentStatusVisual(agent);
@@ -419,7 +420,11 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       path: projectPath,
     })
       .then((result) => {
-        if (cancelled || !result) return;
+        if (cancelled) return;
+        if (!result) {
+          setDetectedPrUrl(null);
+          return;
+        }
         setDetectedPrUrl(result.url);
       })
       .catch(() => {});
@@ -429,6 +434,24 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const existingPrUrl = currentPrUrl(agent) ?? detectedPrUrl;
   const prUrl = existingPrUrl ?? comparePrUrl(agent);
   const prActionLabel = existingPrUrl ? "Open PR" : "Create PR";
+
+  useEffect(() => {
+    if (!projectPath) return;
+    invoke<{
+      checksState: "success" | "failure" | "pending" | "none";
+      approvals: number;
+      comments: number;
+      mergeable: boolean;
+      prNumber: number | null;
+      prUrl: string | null;
+    } | null>("github_get_pr_status", { path: projectPath })
+      .then((prStatus) => {
+        updateAgentPrStatus(agent.id, prStatus);
+      })
+      .catch(() => {
+        updateAgentPrStatus(agent.id, null);
+      });
+  }, [agent.id, agent.branch, projectPath, updateAgentPrStatus]);
 
   async function refreshGitInfo() {
     if (!projectPath) return;
@@ -443,6 +466,15 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         sha: info.sha ?? undefined,
         originUrl: info.originUrl ?? undefined,
       });
+      const prStatus = await invoke<{
+        checksState: "success" | "failure" | "pending" | "none";
+        approvals: number;
+        comments: number;
+        mergeable: boolean;
+        prNumber: number | null;
+        prUrl: string | null;
+      } | null>("github_get_pr_status", { path: projectPath });
+      updateAgentPrStatus(agent.id, prStatus);
     } catch {
       // ignore
     }

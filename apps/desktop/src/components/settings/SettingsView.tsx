@@ -17,12 +17,16 @@ import {
   Bot,
   Check,
   ChevronDown,
+  Copy,
   ExternalLink,
   GitBranch,
+  GitPullRequest,
   Layers,
   Laptop,
+  Loader2,
   Moon,
   Palette,
+  Plug,
   Search,
   SlidersHorizontal,
   Sun,
@@ -95,6 +99,7 @@ const NAV_ITEMS: Array<{
   icon: NavIcon;
 }> = [
   { id: "general", label: "General", icon: SlidersHorizontal },
+  { id: "integrations", label: "Integrations", icon: Plug },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "usage", label: "Usage", icon: BarChart2 },
@@ -193,13 +198,14 @@ export function SettingsView({ onBack }: SettingsViewProps) {
             {activeSection === "general" && (
               <GeneralSection />
             )}
+            {activeSection === "integrations" && <IntegrationsSection />}
             {activeSection === "appearance" && (
               <AppearanceSection theme={theme} setTheme={setTheme} />
             )}
             {activeSection === "agent" && <AgentSection />}
             {activeSection === "mcp" && <McpSection />}
             {activeSection === "archived" && <ArchivedThreadsSection />}
-            {!["general", "appearance", "agent", "mcp", "archived"].includes(activeSection) && (
+            {!["general", "integrations", "appearance", "agent", "mcp", "archived"].includes(activeSection) && (
               <PlaceholderSection
                 label={NAV_ITEMS.find((n) => n.id === activeSection)?.label ?? ""}
               />
@@ -446,6 +452,99 @@ function formatPlanType(planType?: string | null): string | null {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
+type GitHubConnectedUser = {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+};
+
+type GitHubDeviceFlowStartResult = {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresIn: number;
+};
+
+type GitHubDeviceFlowPollResult =
+  | { status: "pending"; interval: number; message?: string | null }
+  | { status: "complete"; user: GitHubConnectedUser }
+  | { status: "error"; message: string };
+
+type LinearConnectedUser = {
+  id: string;
+  name: string;
+  email?: string | null;
+};
+
+type LinearOauthStartResult = {
+  requestId: string;
+  authUrl: string;
+};
+
+type LinearOauthStatusResult =
+  | { status: "pending"; message?: string | null }
+  | { status: "complete"; user: LinearConnectedUser }
+  | { status: "error"; message: string };
+
+function IntegrationCard({
+  title,
+  description,
+  icon,
+  children,
+}: {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border border-border-light rounded-lg overflow-hidden bg-bg-card">
+      <div className="px-4 py-3 border-b border-border-light flex items-start gap-3">
+        <div className="mt-0.5 shrink-0 text-text-tertiary">{icon}</div>
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium text-text-primary">{title}</div>
+          <div className="mt-0.5 text-[11.5px] text-text-tertiary leading-relaxed">
+            {description}
+          </div>
+        </div>
+      </div>
+      <div className="px-4 py-4">{children}</div>
+    </div>
+  );
+}
+
+function IntegrationActionButton({
+  label,
+  onClick,
+  disabled,
+  loading = false,
+  variant = "secondary",
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  variant?: "primary" | "secondary";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11.5px] transition-colors duration-120 cursor-pointer disabled:opacity-50 disabled:cursor-default",
+        variant === "primary"
+          ? "bg-text-primary text-bg-card hover:opacity-90"
+          : "border border-border-default text-text-secondary hover:bg-bg-secondary",
+      )}
+    >
+      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function GeneralSection({
 }: {}) {
   const azureBaseUrl = useSettingsStore((s) => s.azureBaseUrl);
@@ -476,9 +575,6 @@ function GeneralSection({
   const [openAiAccountState, setOpenAiAccountState] = useState<OpenAiAccountState>(
     EMPTY_OPENAI_ACCOUNT_STATE,
   );
-  const [openAiAuthStatus, setOpenAiAuthStatus] = useState<string | null>(null);
-  const [openAiAuthBusy, setOpenAiAuthBusy] = useState<"idle" | "login" | "logout">("idle");
-  const [pendingChatgptLoginId, setPendingChatgptLoginId] = useState<string | null>(null);
   const refreshApiKeyStatus = useCallback(async () => {
     const nextStatus = await invoke<ApiKeyStatuses>("api_key_statuses");
     setStoredKeyStatus(nextStatus);
@@ -504,63 +600,6 @@ function GeneralSection({
     });
   }, [refreshOpenAiAccount]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-
-    onNotification((payload: string) => {
-      try {
-        const msg = JSON.parse(payload) as {
-          method?: string;
-          params?: {
-            loginId?: string | null;
-            success?: boolean;
-            error?: string | null;
-          };
-        };
-
-        if (msg.method === "account/login/completed") {
-          const completedLoginId = msg.params?.loginId ?? null;
-          if (pendingChatgptLoginId && completedLoginId !== pendingChatgptLoginId) {
-            return;
-          }
-          setPendingChatgptLoginId(null);
-          setOpenAiAuthBusy("idle");
-          setOpenAiAuthStatus(
-            msg.params?.success
-              ? completedLoginId
-                ? "Connected with ChatGPT."
-                : "OpenAI API key active."
-              : msg.params?.error?.trim() ||
-                  (completedLoginId
-                    ? "ChatGPT login failed."
-                    : "OpenAI sign-in failed."),
-          );
-          refreshOpenAiAccount().catch((error) => {
-            console.error("account/read failed", error);
-          });
-          return;
-        }
-
-        if (msg.method === "account/updated") {
-          refreshOpenAiAccount().catch((error) => {
-            console.error("account/read failed", error);
-          });
-        }
-      } catch {
-        // Ignore malformed notifications.
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [pendingChatgptLoginId, refreshOpenAiAccount]);
-
   const hasKeyChanges =
     draftOpenAi.trim().length > 0 ||
     draftOpenRouter.trim().length > 0 ||
@@ -574,25 +613,6 @@ function GeneralSection({
   const hasOpenRouterKey =
     (storedKeyStatus.openrouterConfigured && !removeOpenRouter) || draftOpenRouter.trim().length > 0;
   const hasOpenAiAuth = hasOpenAiAccountAuth(openAiAccountState) || hasOpenAiKey;
-  const openAiAccount = openAiAccountState.account;
-  const openAiAuthTitle =
-    openAiAccount?.type === "chatgpt"
-      ? "Signed in with ChatGPT"
-      : openAiAccount?.type === "apiKey"
-        ? "API key active"
-        : "Not connected";
-  const openAiAuthDetail =
-    openAiAccount?.type === "chatgpt"
-      ? [formatPlanType(openAiAccount.planType), openAiAccount.email]
-          .filter(Boolean)
-          .join(" · ") || "Managed ChatGPT session is available."
-      : openAiAccount?.type === "apiKey"
-        ? storedKeyStatus.openaiConfigured
-          ? "Requests use your saved OpenAI API key."
-          : "Requests use the current app-server API-key session."
-        : openAiAccountState.requiresOpenaiAuth
-          ? "OpenAI models need either an API key or a ChatGPT session."
-          : "Current provider choice does not require OpenAI auth.";
   const azureDeploymentModels = buildAzureModels(azureDeployments);
 
   const computeAzureResponsesBaseUrl = () => {
@@ -711,44 +731,6 @@ function GeneralSection({
     setAzureDeploymentStatus(`Added ${nextDeployment}.`);
   };
 
-  const startChatgptLogin = async () => {
-    setOpenAiAuthBusy("login");
-    setOpenAiAuthStatus("Opening ChatGPT login…");
-    try {
-      const res = await rpcRequest<{
-        type: "chatgpt";
-        loginId: string;
-        authUrl: string;
-      }>("account/login/start", { type: "chatgpt" });
-      setPendingChatgptLoginId(res.loginId);
-      await invoke("open_url", { url: res.authUrl });
-      setOpenAiAuthStatus("Complete login in your browser…");
-    } catch (error) {
-      const msg =
-        error instanceof Error ? error.message : typeof error === "string" ? error : "Could not start ChatGPT login.";
-      setPendingChatgptLoginId(null);
-      setOpenAiAuthBusy("idle");
-      setOpenAiAuthStatus(msg);
-    }
-  };
-
-  const logoutOpenAiAccount = async () => {
-    setOpenAiAuthBusy("logout");
-    setOpenAiAuthStatus(null);
-    try {
-      await rpcRequest("account/logout", {});
-      setPendingChatgptLoginId(null);
-      await refreshOpenAiAccount();
-      setOpenAiAuthStatus("Signed out.");
-    } catch (error) {
-      const msg =
-        error instanceof Error ? error.message : typeof error === "string" ? error : "Could not sign out.";
-      setOpenAiAuthStatus(msg);
-    } finally {
-      setOpenAiAuthBusy("idle");
-    }
-  };
-
   return (
     <div>
       <SectionHeading title="General" />
@@ -767,53 +749,10 @@ function GeneralSection({
                   OpenAI
                 </div>
                 <div className="text-[11.5px] text-text-tertiary mt-0.5 leading-relaxed">
-                  Use an API key or sign in with ChatGPT for OpenAI-hosted models.
+                  Save an API key for OpenAI-hosted models. ChatGPT sign-in lives in Integrations.
                 </div>
               </div>
               <div className="divide-y divide-border-light">
-                <div className="px-4 py-3 flex items-center justify-between gap-6">
-                  <span className="text-[12.5px] text-text-secondary">
-                    Authentication
-                  </span>
-                  <div className="w-[360px] max-w-full flex flex-col gap-2">
-                    <div className="w-full flex items-start gap-2">
-                      <div className="min-w-0 flex-1 rounded-md border border-border-light bg-bg-card px-3 py-2.5">
-                        <div className="text-[12.5px] font-medium text-text-primary">
-                          {openAiAuthTitle}
-                        </div>
-                        <div className="mt-0.5 text-[10.5px] text-text-tertiary leading-relaxed">
-                          {openAiAuthDetail}
-                        </div>
-                      </div>
-                      {openAiAccount?.type !== "chatgpt" && (
-                        <button
-                          type="button"
-                          onClick={() => void startChatgptLogin()}
-                          disabled={openAiAuthBusy !== "idle"}
-                          className="shrink-0 px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                        >
-                          {openAiAuthBusy === "login" ? "Opening…" : "Login with ChatGPT"}
-                        </button>
-                      )}
-                      {openAiAccount?.type === "chatgpt" && (
-                        <button
-                          type="button"
-                          onClick={() => void logoutOpenAiAccount()}
-                          disabled={openAiAuthBusy !== "idle"}
-                          className="shrink-0 px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                        >
-                          {openAiAuthBusy === "logout" ? "Signing out…" : "Sign out"}
-                        </button>
-                      )}
-                    </div>
-                    <div className="w-full text-[10.5px] text-text-tertiary leading-relaxed">
-                      {openAiAuthStatus ??
-                        (openAiAccount?.type === "chatgpt"
-                          ? "Codex uses your ChatGPT login first and falls back to your saved API key if ChatGPT auth stops working."
-                          : "You can keep an API key saved and still use ChatGPT login when needed.")}
-                    </div>
-                  </div>
-                </div>
                 <div className="px-4 py-3 flex items-center justify-between gap-6">
                   <span className="text-[12.5px] text-text-secondary">
                     API key
@@ -1156,6 +1095,492 @@ function GeneralSection({
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function IntegrationsSection() {
+  const [openAiAccountState, setOpenAiAccountState] = useState<OpenAiAccountState>(
+    EMPTY_OPENAI_ACCOUNT_STATE,
+  );
+  const [openAiAuthStatus, setOpenAiAuthStatus] = useState<string | null>(null);
+  const [openAiAuthBusy, setOpenAiAuthBusy] = useState<"idle" | "login" | "logout">("idle");
+  const [pendingChatgptLoginId, setPendingChatgptLoginId] = useState<string | null>(null);
+
+  const [githubUser, setGithubUser] = useState<GitHubConnectedUser | null>(null);
+  const [githubStatus, setGithubStatus] = useState<string | null>(null);
+  const [githubBusy, setGithubBusy] = useState<"idle" | "starting" | "disconnecting">("idle");
+  const [githubFlow, setGithubFlow] = useState<GitHubDeviceFlowStartResult | null>(null);
+
+  const [linearUser, setLinearUser] = useState<LinearConnectedUser | null>(null);
+  const [linearStatus, setLinearStatus] = useState<string | null>(null);
+  const [linearBusy, setLinearBusy] = useState<"idle" | "starting" | "disconnecting">("idle");
+  const [linearRequestId, setLinearRequestId] = useState<string | null>(null);
+
+  const refreshOpenAiAccount = useCallback(async () => {
+    const nextAccount = await readOpenAiAccount(false);
+    setOpenAiAccountState(nextAccount);
+  }, []);
+
+  const refreshGithubUser = useCallback(async () => {
+    const nextUser = await invoke<GitHubConnectedUser | null>("github_get_user");
+    setGithubUser(nextUser);
+  }, []);
+
+  const refreshLinearUser = useCallback(async () => {
+    const nextUser = await invoke<LinearConnectedUser | null>("linear_get_user");
+    setLinearUser(nextUser);
+  }, []);
+
+  useEffect(() => {
+    refreshOpenAiAccount().catch((error) => {
+      console.error("account/read failed", error);
+    });
+    refreshGithubUser().catch((error) => {
+      console.error("github_get_user failed", error);
+    });
+    refreshLinearUser().catch((error) => {
+      console.error("linear_get_user failed", error);
+    });
+  }, [refreshGithubUser, refreshLinearUser, refreshOpenAiAccount]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    onNotification((payload: string) => {
+      try {
+        const msg = JSON.parse(payload) as {
+          method?: string;
+          params?: {
+            loginId?: string | null;
+            success?: boolean;
+            error?: string | null;
+          };
+        };
+
+        if (msg.method === "account/login/completed") {
+          const completedLoginId = msg.params?.loginId ?? null;
+          if (pendingChatgptLoginId && completedLoginId !== pendingChatgptLoginId) {
+            return;
+          }
+          setPendingChatgptLoginId(null);
+          setOpenAiAuthBusy("idle");
+          setOpenAiAuthStatus(
+            msg.params?.success
+              ? "Connected with ChatGPT."
+              : msg.params?.error?.trim() || "ChatGPT login failed.",
+          );
+          refreshOpenAiAccount().catch((error) => {
+            console.error("account/read failed", error);
+          });
+          return;
+        }
+
+        if (msg.method === "account/updated") {
+          refreshOpenAiAccount().catch((error) => {
+            console.error("account/read failed", error);
+          });
+        }
+      } catch {
+        // Ignore malformed notifications.
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [pendingChatgptLoginId, refreshOpenAiAccount]);
+
+  useEffect(() => {
+    if (!githubFlow) return;
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const poll = (delayMs: number) => {
+      timeoutId = window.setTimeout(() => {
+        invoke<GitHubDeviceFlowPollResult>("github_device_flow_poll", {
+          deviceCode: githubFlow.deviceCode,
+        })
+          .then((result) => {
+            if (cancelled) return;
+            if (result.status === "pending") {
+              setGithubStatus(result.message ?? "Waiting for GitHub authorization…");
+              poll(result.interval * 1000);
+              return;
+            }
+            setGithubBusy("idle");
+            setGithubFlow(null);
+            if (result.status === "complete") {
+              setGithubUser(result.user);
+              setGithubStatus(`Connected as @${result.user.login}.`);
+              return;
+            }
+            setGithubStatus(result.message);
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setGithubBusy("idle");
+            setGithubFlow(null);
+            setGithubStatus(
+              error instanceof Error ? error.message : "Could not complete GitHub login.",
+            );
+          });
+      }, delayMs);
+    };
+
+    poll(githubFlow.interval * 1000);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [githubFlow]);
+
+  useEffect(() => {
+    if (!linearRequestId) return;
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const poll = () => {
+      timeoutId = window.setTimeout(() => {
+        invoke<LinearOauthStatusResult>("linear_oauth_status", {
+          requestId: linearRequestId,
+        })
+          .then((result) => {
+            if (cancelled) return;
+            if (result.status === "pending") {
+              poll();
+              return;
+            }
+            setLinearBusy("idle");
+            setLinearRequestId(null);
+            if (result.status === "complete") {
+              setLinearUser(result.user);
+              setLinearStatus(`Connected as ${result.user.name}.`);
+              return;
+            }
+            setLinearStatus(result.message);
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setLinearBusy("idle");
+            setLinearRequestId(null);
+            setLinearStatus(
+              error instanceof Error ? error.message : "Could not complete Linear login.",
+            );
+          });
+      }, 1500);
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [linearRequestId]);
+
+  const startChatgptLogin = useCallback(async () => {
+    setOpenAiAuthBusy("login");
+    setOpenAiAuthStatus("Opening ChatGPT login…");
+    try {
+      const res = await rpcRequest<{
+        type: "chatgpt";
+        loginId: string;
+        authUrl: string;
+      }>("account/login/start", { type: "chatgpt" });
+      setPendingChatgptLoginId(res.loginId);
+      await invoke("open_url", { url: res.authUrl });
+      setOpenAiAuthStatus("Complete login in your browser…");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Could not start ChatGPT login.";
+      setPendingChatgptLoginId(null);
+      setOpenAiAuthBusy("idle");
+      setOpenAiAuthStatus(message);
+    }
+  }, []);
+
+  const logoutOpenAiAccount = useCallback(async () => {
+    setOpenAiAuthBusy("logout");
+    setOpenAiAuthStatus(null);
+    try {
+      await rpcRequest("account/logout", {});
+      setPendingChatgptLoginId(null);
+      await refreshOpenAiAccount();
+      setOpenAiAuthStatus("Signed out.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Could not sign out.";
+      setOpenAiAuthStatus(message);
+    } finally {
+      setOpenAiAuthBusy("idle");
+    }
+  }, [refreshOpenAiAccount]);
+
+  const startGithubLogin = useCallback(async () => {
+    setGithubBusy("starting");
+    setGithubStatus("Preparing GitHub login…");
+    try {
+      const result = await invoke<GitHubDeviceFlowStartResult>("github_device_flow_start");
+      setGithubFlow(result);
+      await invoke("open_url", { url: result.verificationUri });
+      setGithubStatus("Enter the GitHub device code in your browser.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Could not start GitHub login.";
+      setGithubBusy("idle");
+      setGithubFlow(null);
+      setGithubStatus(message);
+    }
+  }, []);
+
+  const disconnectGithub = useCallback(async () => {
+    setGithubBusy("disconnecting");
+    setGithubStatus(null);
+    try {
+      await invoke("github_disconnect");
+      setGithubFlow(null);
+      setGithubUser(null);
+      setGithubStatus("Disconnected.");
+    } catch (error) {
+      setGithubStatus(
+        error instanceof Error ? error.message : "Could not disconnect GitHub.",
+      );
+    } finally {
+      setGithubBusy("idle");
+    }
+  }, []);
+
+  const startLinearLogin = useCallback(async () => {
+    setLinearBusy("starting");
+    setLinearStatus("Opening Linear login…");
+    try {
+      const result = await invoke<LinearOauthStartResult>("linear_oauth_start");
+      setLinearRequestId(result.requestId);
+      await invoke("open_url", { url: result.authUrl });
+      setLinearStatus("Complete the Linear login in your browser…");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Could not start Linear login.";
+      setLinearBusy("idle");
+      setLinearRequestId(null);
+      setLinearStatus(message);
+    }
+  }, []);
+
+  const disconnectLinear = useCallback(async () => {
+    setLinearBusy("disconnecting");
+    setLinearStatus(null);
+    try {
+      await invoke("linear_disconnect");
+      setLinearRequestId(null);
+      setLinearUser(null);
+      setLinearStatus("Disconnected.");
+    } catch (error) {
+      setLinearStatus(
+        error instanceof Error ? error.message : "Could not disconnect Linear.",
+      );
+    } finally {
+      setLinearBusy("idle");
+    }
+  }, []);
+
+  const openAiAccount = openAiAccountState.account;
+  const openAiDisplay =
+    openAiAccount?.type === "chatgpt"
+      ? [formatPlanType(openAiAccount.planType), openAiAccount.email]
+          .filter(Boolean)
+          .join(" · ") || "Connected with ChatGPT."
+      : "Not connected.";
+
+  return (
+    <div>
+      <SectionHeading
+        title="Integrations"
+        description="Connect external accounts for PR metadata, issue linking, and managed OpenAI authentication."
+      />
+
+      <div className="grid gap-4">
+        <IntegrationCard
+          title="GitHub"
+          description="Use GitHub OAuth for pull request checks, approvals, comments, and merge status."
+          icon={<GitPullRequest className="h-4 w-4" strokeWidth={1.75} />}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium text-text-primary">
+                {githubUser ? `@${githubUser.login}` : "Not connected"}
+              </div>
+              <div className="mt-0.5 text-[11px] text-text-tertiary leading-relaxed">
+                {githubUser?.name ?? "Required for private-repo PR metadata and status checks."}
+              </div>
+            </div>
+            {githubUser ? (
+              <div className="flex items-center gap-3">
+                {githubUser.avatarUrl ? (
+                  <img
+                    src={githubUser.avatarUrl}
+                    alt=""
+                    className="h-8 w-8 shrink-0 rounded-full border border-border-light"
+                  />
+                ) : null}
+                <IntegrationActionButton
+                  label={githubBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                  onClick={() => void disconnectGithub()}
+                  disabled={githubBusy !== "idle"}
+                  loading={githubBusy === "disconnecting"}
+                />
+              </div>
+            ) : (
+              <IntegrationActionButton
+                label={githubBusy === "starting" ? "Starting…" : "Connect GitHub"}
+                onClick={() => void startGithubLogin()}
+                disabled={githubBusy !== "idle"}
+                loading={githubBusy === "starting"}
+                variant="primary"
+              />
+            )}
+          </div>
+
+          {githubFlow ? (
+            <div className="mt-4 rounded-lg border border-border-light bg-bg-secondary/60 p-3">
+              <div className="text-[10.5px] text-text-tertiary uppercase tracking-widest mb-2">
+                Device code
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1 rounded-md border border-border-light bg-bg-card px-3 py-2 font-mono text-[12px] text-text-primary">
+                  {githubFlow.userCode}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(githubFlow.userCode).catch(() => {});
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-border-default px-2.5 py-2 text-[10.5px] text-text-secondary hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                >
+                  <Copy className="h-3 w-3" strokeWidth={1.75} />
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void invoke("open_url", { url: githubFlow.verificationUri });
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-border-default px-2.5 py-2 text-[10.5px] text-text-secondary hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                >
+                  <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
+                  Open GitHub
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 text-[11px] text-text-tertiary leading-relaxed">
+            {githubStatus ?? "Connect GitHub to replace placeholder PR metadata with real checks and review data."}
+          </div>
+        </IntegrationCard>
+
+        <IntegrationCard
+          title="Linear"
+          description="Use Linear OAuth to link threads to issues and prepare Linear issue workflows."
+          icon={<Layers className="h-4 w-4" strokeWidth={1.75} />}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium text-text-primary">
+                {linearUser?.name ?? "Not connected"}
+              </div>
+              <div className="mt-0.5 text-[11px] text-text-tertiary leading-relaxed">
+                {linearUser?.email ?? "Connect Linear to link Awencode threads to issues."}
+              </div>
+            </div>
+            {linearUser ? (
+              <IntegrationActionButton
+                label={linearBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                onClick={() => void disconnectLinear()}
+                disabled={linearBusy !== "idle"}
+                loading={linearBusy === "disconnecting"}
+              />
+            ) : (
+              <IntegrationActionButton
+                label={linearBusy === "starting" ? "Starting…" : "Connect Linear"}
+                onClick={() => void startLinearLogin()}
+                disabled={linearBusy !== "idle"}
+                loading={linearBusy === "starting"}
+                variant="primary"
+              />
+            )}
+          </div>
+
+          <div className="mt-3 text-[11px] text-text-tertiary leading-relaxed">
+            {linearStatus ?? "Complete the browser flow to make Linear issue linking available."}
+          </div>
+        </IntegrationCard>
+
+        <IntegrationCard
+          title="ChatGPT"
+          description="Use your ChatGPT account for managed OpenAI authentication. API keys remain in General."
+          icon={<Bot className="h-4 w-4" strokeWidth={1.75} />}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium text-text-primary">
+                {openAiAccount?.type === "chatgpt" ? "Connected" : "Not connected"}
+              </div>
+              <div className="mt-0.5 text-[11px] text-text-tertiary leading-relaxed">
+                {openAiDisplay}
+              </div>
+            </div>
+            {openAiAccount?.type === "chatgpt" ? (
+              <IntegrationActionButton
+                label={openAiAuthBusy === "logout" ? "Signing out…" : "Sign out"}
+                onClick={() => void logoutOpenAiAccount()}
+                disabled={openAiAuthBusy !== "idle"}
+                loading={openAiAuthBusy === "logout"}
+              />
+            ) : (
+              <IntegrationActionButton
+                label={openAiAuthBusy === "login" ? "Opening…" : "Connect ChatGPT"}
+                onClick={() => void startChatgptLogin()}
+                disabled={openAiAuthBusy !== "idle"}
+                loading={openAiAuthBusy === "login"}
+                variant="primary"
+              />
+            )}
+          </div>
+
+          <div className="mt-3 text-[11px] text-text-tertiary leading-relaxed">
+            {openAiAuthStatus ??
+              (openAiAccount?.type === "chatgpt"
+                ? "Codex uses your ChatGPT session first and can still fall back to saved API keys."
+                : "Connect ChatGPT when you want managed OpenAI auth instead of an API key.")}
+          </div>
+        </IntegrationCard>
       </div>
     </div>
   );

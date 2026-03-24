@@ -1049,7 +1049,11 @@ function GitButton({
       path: projectPath,
     })
       .then((result) => {
-        if (cancelled || !result) return;
+        if (cancelled) return;
+        if (!result) {
+          setDetectedPrUrl(null);
+          return;
+        }
         setDetectedPrUrl(result.url);
       })
       .catch(() => {});
@@ -1513,6 +1517,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentDiff = useThreadStore((s) => s.updateAgentDiff);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
+  const updateAgentPrStatus = useThreadStore((s) => s.updateAgentPrStatus);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
   const replaceUserMessageContent = useThreadStore((s) => s.replaceUserMessageContent);
 
@@ -1560,6 +1565,24 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       })
       .catch(() => {});
   }, [agent.id, agent.codexThreadId, projectPath, updateAgentGitInfo]);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    invoke<{
+      checksState: "success" | "failure" | "pending" | "none";
+      approvals: number;
+      comments: number;
+      mergeable: boolean;
+      prNumber: number | null;
+      prUrl: string | null;
+    } | null>("github_get_pr_status", { path: projectPath })
+      .then((prStatus) => {
+        updateAgentPrStatus(agent.id, prStatus);
+      })
+      .catch(() => {
+        updateAgentPrStatus(agent.id, null);
+      });
+  }, [agent.id, agent.branch, projectPath, updateAgentPrStatus]);
 
   const handleSend = useCallback(
     async (message: string, attachments: Attachment[]) => {

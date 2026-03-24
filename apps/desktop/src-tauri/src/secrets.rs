@@ -4,6 +4,8 @@ const SECRET_SERVICE: &str = "com.awencode.desktop";
 const OPENAI_ACCOUNT: &str = "openai";
 const OPENROUTER_ACCOUNT: &str = "openrouter";
 const AZURE_ACCOUNT: &str = "azure-openai";
+const GITHUB_ACCOUNT: &str = "github";
+const LINEAR_ACCOUNT: &str = "linear";
 
 #[derive(Debug, Clone)]
 pub struct StoredApiKeys {
@@ -53,6 +55,30 @@ pub fn persist_api_key_updates(
     }
 
     load_api_keys()
+}
+
+pub fn load_github_token() -> Result<Option<String>, String> {
+    read_secret(GITHUB_ACCOUNT)
+}
+
+pub fn persist_github_token(value: &str) -> Result<(), String> {
+    write_secret(GITHUB_ACCOUNT, value)
+}
+
+pub fn clear_github_token() -> Result<(), String> {
+    write_secret(GITHUB_ACCOUNT, "")
+}
+
+pub fn load_linear_token() -> Result<Option<String>, String> {
+    read_secret(LINEAR_ACCOUNT)
+}
+
+pub fn persist_linear_token(value: &str) -> Result<(), String> {
+    write_secret(LINEAR_ACCOUNT, value)
+}
+
+pub fn clear_linear_token() -> Result<(), String> {
+    write_secret(LINEAR_ACCOUNT, "")
 }
 
 fn keyring_entry(account: &str) -> Result<Entry, String> {

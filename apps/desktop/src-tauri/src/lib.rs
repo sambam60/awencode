@@ -1,4 +1,7 @@
+mod app_env;
 mod codex_bridge;
+mod github;
+mod linear;
 mod openai;
 mod secrets;
 
@@ -188,6 +191,69 @@ fn api_key_statuses() -> Result<secrets::ApiKeyStatuses, String> {
 }
 
 #[tauri::command]
+async fn github_device_flow_start() -> Result<github::GitHubDeviceFlowStartResult, String> {
+    github::github_device_flow_start().await
+}
+
+#[tauri::command]
+async fn github_device_flow_poll(
+    device_code: String,
+) -> Result<github::GitHubDeviceFlowPollResult, String> {
+    github::github_device_flow_poll(device_code).await
+}
+
+#[tauri::command]
+async fn github_get_user() -> Result<Option<github::GitHubUser>, String> {
+    github::github_get_user().await
+}
+
+#[tauri::command]
+fn github_disconnect() -> Result<(), String> {
+    github::github_disconnect()
+}
+
+#[tauri::command]
+async fn github_get_pr_status(path: String) -> Result<Option<github::GitHubPrStatus>, String> {
+    github::github_get_pr_status(path).await
+}
+
+#[tauri::command]
+async fn linear_oauth_start() -> Result<linear::LinearOauthStartResult, String> {
+    linear::linear_oauth_start().await
+}
+
+#[tauri::command]
+async fn linear_oauth_status(
+    request_id: String,
+) -> Result<linear::LinearOauthStatusResult, String> {
+    linear::linear_oauth_status(request_id).await
+}
+
+#[tauri::command]
+async fn linear_get_user() -> Result<Option<linear::LinearUser>, String> {
+    linear::linear_get_user().await
+}
+
+#[tauri::command]
+fn linear_disconnect() -> Result<(), String> {
+    linear::linear_disconnect()
+}
+
+#[tauri::command]
+async fn linear_get_assigned_issues() -> Result<Vec<linear::LinearIssue>, String> {
+    linear::linear_get_assigned_issues().await
+}
+
+#[tauri::command]
+async fn linear_create_issue(
+    title: String,
+    description: Option<String>,
+    team_id: Option<String>,
+) -> Result<linear::LinearIssue, String> {
+    linear::linear_create_issue(title, description, team_id).await
+}
+
+#[tauri::command]
 async fn generate_thread_title(seed_message: String) -> Result<Option<String>, String> {
     let stored = load_api_keys()?;
     let Some(openai_api_key) = stored.openai else {
@@ -256,7 +322,13 @@ async fn read_staged_diff_context(path: &Path) -> Result<String, String> {
     let patch_path = path.to_path_buf();
     let patch_output = tokio::task::spawn_blocking(move || {
         std::process::Command::new("git")
-            .args(["diff", "--cached", "--no-color", "--no-ext-diff", "--unified=0"])
+            .args([
+                "diff",
+                "--cached",
+                "--no-color",
+                "--no-ext-diff",
+                "--unified=0",
+            ])
             .current_dir(&patch_path)
             .output()
     })
@@ -270,8 +342,12 @@ async fn read_staged_diff_context(path: &Path) -> Result<String, String> {
         ));
     }
 
-    let summary = String::from_utf8_lossy(&summary_output.stdout).trim().to_string();
-    let patch = String::from_utf8_lossy(&patch_output.stdout).trim().to_string();
+    let summary = String::from_utf8_lossy(&summary_output.stdout)
+        .trim()
+        .to_string();
+    let patch = String::from_utf8_lossy(&patch_output.stdout)
+        .trim()
+        .to_string();
 
     if summary.is_empty() && patch.is_empty() {
         return Err("No staged changes to commit".to_string());
@@ -1022,6 +1098,17 @@ pub fn run() {
             codex_read_persisted_openai_auth_state,
             codex_refresh_bridge_credentials,
             api_key_statuses,
+            github_device_flow_start,
+            github_device_flow_poll,
+            github_get_user,
+            github_disconnect,
+            github_get_pr_status,
+            linear_oauth_start,
+            linear_oauth_status,
+            linear_get_user,
+            linear_disconnect,
+            linear_get_assigned_issues,
+            linear_create_issue,
             generate_thread_title,
             git_clone,
             git_create_branch,
