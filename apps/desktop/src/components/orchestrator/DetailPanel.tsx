@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   ArrowUpRight,
   Check,
+  ChevronDown,
   CircleCheck,
   CircleDashed,
   CircleDot,
@@ -12,6 +13,8 @@ import {
   GitCommit,
   GitMerge,
   GitPullRequest,
+  ListFilter,
+  Loader2,
   MessageSquare,
   Trash2,
   UserCheck,
@@ -66,36 +69,67 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function planStepAccent(status: AgentPlanStep["status"]): string {
-  if (status === "completed") return "var(--accent-green)";
-  if (status === "inProgress") return "var(--accent-blue)";
-  return "var(--accent-grey)";
+function PlanStepIcon({ status }: { status: AgentPlanStep["status"] }) {
+  if (status === "completed") {
+    return <CircleCheck size={14} strokeWidth={1.5} className="text-text-faint shrink-0" />;
+  }
+  if (status === "inProgress") {
+    return <Loader2 size={14} strokeWidth={1.75} className="text-text-tertiary shrink-0 animate-spin" />;
+  }
+  return <CircleDashed size={14} strokeWidth={1.5} className="text-text-tertiary shrink-0" />;
 }
 
 function AgentPlanBlock({ steps }: { steps: AgentPlanStep[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const doneCount = useMemo(
+    () => steps.filter((s) => s.status === "completed").length,
+    [steps],
+  );
+
   if (steps.length === 0) return null;
+
   return (
     <div className="border border-border-light rounded-lg overflow-hidden">
-      <div className="px-3 py-2 border-b border-border-light bg-bg-secondary">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded((v) => !v); }}
+        className="flex w-full items-center gap-2.5 px-3 py-2 border-b border-border-light bg-bg-secondary cursor-pointer select-none"
+      >
+        <ListFilter size={12} strokeWidth={1.75} className="text-text-faint shrink-0" />
         <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">
-          Plan
+          {doneCount} of {steps.length} Done
         </span>
+        <ChevronDown
+          size={12}
+          strokeWidth={1.75}
+          className={cn(
+            "ml-auto text-text-faint shrink-0 transition-transform duration-150",
+            expanded && "rotate-180",
+          )}
+        />
       </div>
-      <ul className="divide-y divide-border-light">
+      {expanded && <ul>
         {steps.map((s, i) => (
           <li
             key={i}
-            className="flex gap-2.5 px-3 py-2.5 text-[12.5px] text-text-primary leading-snug"
-            style={{
-              borderLeftWidth: 2.5,
-              borderLeftStyle: "solid",
-              borderLeftColor: planStepAccent(s.status),
-            }}
+            className={cn(
+              "flex items-start gap-2.5 px-3 py-2.5 text-[12.5px] leading-snug",
+              i < steps.length - 1 && "border-b border-border-light",
+              s.status === "completed"
+                ? "text-text-faint line-through"
+                : "text-text-primary",
+            )}
           >
+            <span className="mt-[1px]">
+              <PlanStepIcon status={s.status} />
+            </span>
             <span className="flex-1 min-w-0">{s.step}</span>
           </li>
         ))}
-      </ul>
+        </ul>}
     </div>
   );
 }
@@ -460,7 +494,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   }
 
   async function runCommit() {
-    if (!projectPath || !commitMessage.trim()) return;
+    if (!projectPath || gitBusy !== null) return;
     setGitError(null);
     setGitBusy("commit");
     try {
@@ -576,9 +610,10 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               else void runCreateBranch();
             }}
             placeholder={
-              gitDialog === "commit" ? "Describe your changes..." : "feat/my-branch"
+              gitDialog === "commit" ? "Leave empty to auto-generate..." : "feat/my-branch"
             }
-            className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3"
+            disabled={gitBusy !== null}
+            className="w-full px-3 py-2 rounded-md border border-border-default bg-bg-input text-[13px] text-text-primary placeholder:text-text-faint mb-3 disabled:opacity-60"
           />
           {gitError ? (
             <p className="text-[11px] text-accent-red mb-3 leading-snug">{gitError}</p>
@@ -596,9 +631,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               type="button"
               disabled={
                 gitBusy !== null ||
-                (gitDialog === "commit"
-                  ? !commitMessage.trim()
-                  : !newBranchName.trim())
+                (gitDialog === "branch" && !newBranchName.trim())
               }
               onClick={() => {
                 if (gitDialog === "commit") void runCommit();
@@ -608,10 +641,12 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             >
               {gitDialog === "commit"
                 ? gitBusy === "commit"
-                  ? "Committing…"
+                  ? commitMessage.trim()
+                    ? "Committing\u2026"
+                    : "Generating\u2026"
                   : "Commit"
                 : gitBusy === "branch"
-                  ? "Creating…"
+                  ? "Creating\u2026"
                   : "Create branch"}
             </button>
           </div>
@@ -705,9 +740,6 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             <div className="grid grid-cols-2 gap-2.5">
               <StatCard label="Time" value={getAgentTimeLabel(agent)} />
               <StatCard label="Tokens" value={getAgentTokenLabel(agent)} />
-              {(agent.planSteps?.length ?? 0) > 0 && (
-                <StatCard label="Progress" value={`${agent.progress}%`} />
-              )}
             </div>
 
             <GitOverviewCard

@@ -196,6 +196,118 @@ async fn generate_thread_title(seed_message: String) -> Result<Option<String>, S
     openai::generate_thread_title(&openai_api_key, &seed_message).await
 }
 
+fn command_stderr(stderr: &[u8], fallback: &str) -> String {
+    let message = String::from_utf8_lossy(stderr).trim().to_string();
+    if message.is_empty() {
+        fallback.to_string()
+    } else {
+        message
+    }
+}
+
+fn truncate_prompt_context(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    format!(
+        "{}\n...[truncated]",
+        text.chars().take(max_chars).collect::<String>()
+    )
+}
+
+async fn git_add_all(path: &Path) -> Result<(), String> {
+    let path = path.to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&path)
+            .output()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_stderr(&output.stderr, "git add failed"))
+    }
+}
+
+async fn read_staged_diff_context(path: &Path) -> Result<String, String> {
+    let summary_path = path.to_path_buf();
+    let summary_output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["diff", "--cached", "--stat=160,120", "--summary"])
+            .current_dir(&summary_path)
+            .output()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+    if !summary_output.status.success() {
+        return Err(command_stderr(
+            &summary_output.stderr,
+            "Failed to read staged diff summary",
+        ));
+    }
+
+    let patch_path = path.to_path_buf();
+    let patch_output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["diff", "--cached", "--no-color", "--no-ext-diff", "--unified=0"])
+            .current_dir(&patch_path)
+            .output()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+    if !patch_output.status.success() {
+        return Err(command_stderr(
+            &patch_output.stderr,
+            "Failed to read staged patch",
+        ));
+    }
+
+    let summary = String::from_utf8_lossy(&summary_output.stdout).trim().to_string();
+    let patch = String::from_utf8_lossy(&patch_output.stdout).trim().to_string();
+
+    if summary.is_empty() && patch.is_empty() {
+        return Err("No staged changes to commit".to_string());
+    }
+
+    let mut sections = Vec::new();
+    if !summary.is_empty() {
+        sections.push(format!("Staged change summary:\n{summary}"));
+    }
+    if !patch.is_empty() {
+        sections.push(format!(
+            "Staged patch:\n{}",
+            truncate_prompt_context(&patch, 12_000)
+        ));
+    }
+
+    Ok(sections.join("\n\n"))
+}
+
+async fn resolve_commit_message(path: &Path, message: &str) -> Result<String, String> {
+    let message = message.trim();
+    if !message.is_empty() {
+        return Ok(message.to_string());
+    }
+
+    let stored = load_api_keys()?;
+    let Some(openai_api_key) = stored.openai else {
+        return Err("Commit message is required when no OpenAI API key is configured".to_string());
+    };
+
+    let diff_context = read_staged_diff_context(path).await?;
+    openai::generate_commit_message(&openai_api_key, &diff_context)
+        .await?
+        .ok_or_else(|| "Failed to generate a commit message from the staged changes".to_string())
+}
+
 /// Whether `path` exists on disk and is a directory (false if missing or inaccessible).
 #[tauri::command]
 fn path_is_directory(path: String) -> bool {
@@ -705,35 +817,22 @@ async fn git_commit(path: String, message: String) -> Result<(), String> {
     if !path.is_dir() {
         return Err("Not a directory".to_string());
     }
-    let message = message.trim().to_string();
-    if message.is_empty() {
-        return Err("Commit message is required".to_string());
-    }
-    let path_add = path.clone();
-    let status = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(&path_add)
-            .status()
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("git add failed".to_string());
-    }
+
+    git_add_all(&path).await?;
+    let message = resolve_commit_message(&path, &message).await?;
+
     let path_commit = path.clone();
-    let status = tokio::task::spawn_blocking(move || {
+    let output = tokio::task::spawn_blocking(move || {
         std::process::Command::new("git")
             .args(["commit", "-m", &message])
             .current_dir(&path_commit)
-            .status()
+            .output()
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("git commit failed".to_string());
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(command_stderr(&output.stderr, "git commit failed"));
     }
     Ok(())
 }
