@@ -1,0 +1,7 @@
+# Devcontainer image does not COPY from the repo; keep build context tiny.
+**/target/
+**/node_modules/
+.git/
+.pnpm-store/
+dist/
+**/dist/

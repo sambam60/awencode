@@ -9,6 +9,8 @@ use codex_utils_home_dir::find_codex_home;
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
+mod path_env;
+
 const LINUX_SANDBOX_ARG0: &str = "codex-linux-sandbox";
 const APPLY_PATCH_ARG0: &str = "apply_patch";
 const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
@@ -109,6 +111,8 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
     load_dotenv();
+    #[cfg(unix)]
+    path_env::augment_for_shell_tools();
 
     match prepend_path_entry_for_codex_aliases() {
         Ok(path_entry) => Some(path_entry),
