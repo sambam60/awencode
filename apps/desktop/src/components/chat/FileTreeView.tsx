@@ -511,7 +511,6 @@ const TreeRow = memo(function TreeRow({
 
 export function FileTreeView({
   projectPath,
-  projectName,
   branch,
   width,
   open,
