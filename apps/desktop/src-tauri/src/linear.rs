@@ -51,6 +51,26 @@ pub struct LinearIssue {
     pub title: String,
     pub url: String,
     pub state_name: Option<String>,
+    pub state_type: Option<String>,
+    pub team_id: Option<String>,
+    pub team_name: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearTeam {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearWorkflowStateSummary {
+    pub id: String,
+    pub name: String,
+    pub team_id: String,
+    pub team_name: String,
+    pub state_type: Option<String>,
 }
 
 struct LinearOauthSession {
@@ -90,6 +110,22 @@ struct LinearAssignedIssuesData {
 }
 
 #[derive(Debug, Deserialize)]
+struct LinearTeamsData {
+    teams: LinearTeamConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinearTeamConnection {
+    nodes: Vec<LinearTeamNode>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LinearTeamNode {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LinearAssignedIssuesViewer {
     assigned_issues: LinearIssueConnection,
@@ -100,7 +136,7 @@ struct LinearIssueConnection {
     nodes: Vec<LinearIssueNode>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LinearIssueNode {
     id: String,
@@ -108,11 +144,22 @@ struct LinearIssueNode {
     title: String,
     url: String,
     state: Option<LinearIssueState>,
+    team: Option<LinearIssueTeam>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LinearIssueState {
+    id: Option<String>,
     name: String,
+    #[serde(rename = "type")]
+    state_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LinearIssueTeam {
+    id: String,
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +172,49 @@ struct LinearIssueCreateData {
 struct LinearIssueCreatePayload {
     success: bool,
     issue: Option<LinearIssueNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinearIssueLookupData {
+    issue: Option<LinearIssueNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinearIssueSearchData {
+    issues: LinearIssueConnection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LinearIssueUpdateData {
+    issue_update: LinearIssueUpdatePayload,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinearIssueUpdatePayload {
+    success: bool,
+    issue: Option<LinearIssueNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LinearWorkflowStatesData {
+    workflow_states: LinearWorkflowStateConnection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LinearWorkflowStateConnection {
+    nodes: Vec<LinearWorkflowStateNode>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LinearWorkflowStateNode {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    state_type: Option<String>,
+    position: Option<f64>,
 }
 
 pub async fn linear_oauth_start() -> Result<LinearOauthStartResult, String> {
@@ -199,6 +289,44 @@ pub async fn linear_get_user() -> Result<Option<LinearUser>, String> {
     linear_viewer_from_token(&token).await
 }
 
+pub async fn linear_get_teams() -> Result<Vec<LinearTeam>, String> {
+    let Some(token) = load_linear_token()? else {
+        return Err("Connect Linear before listing teams.".to_string());
+    };
+    linear_teams_from_token(&token).await
+}
+
+pub async fn linear_get_workflow_states() -> Result<Vec<LinearWorkflowStateSummary>, String> {
+    let Some(token) = load_linear_token()? else {
+        return Err("Connect Linear before listing workflow states.".to_string());
+    };
+    let teams = linear_teams_from_token(&token).await?;
+    let mut states = Vec::new();
+    for team in teams {
+        let mut team_states = linear_workflow_states(&token, &team.id).await?;
+        team_states.sort_by(|a, b| {
+            let a_pos = a.position.unwrap_or(f64::INFINITY);
+            let b_pos = b.position.unwrap_or(f64::INFINITY);
+            a_pos
+                .partial_cmp(&b_pos)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        states.extend(
+            team_states
+                .into_iter()
+                .map(|state| LinearWorkflowStateSummary {
+                    id: state.id,
+                    name: state.name,
+                    team_id: team.id.clone(),
+                    team_name: team.name.clone(),
+                    state_type: state.state_type,
+                }),
+        );
+    }
+    Ok(states)
+}
+
 pub fn linear_disconnect() -> Result<(), String> {
     clear_linear_token()
 }
@@ -218,8 +346,14 @@ pub async fn linear_get_assigned_issues() -> Result<Vec<LinearIssue>, String> {
                 identifier
                 title
                 url
-                state {
+                team {
+                  id
                   name
+                }
+                state {
+                  id
+                  name
+                  type
                 }
               }
             }
@@ -244,14 +378,12 @@ pub async fn linear_get_assigned_issues() -> Result<Vec<LinearIssue>, String> {
 pub async fn linear_create_issue(
     title: String,
     description: Option<String>,
-    team_id: Option<String>,
+    team: Option<String>,
 ) -> Result<LinearIssue, String> {
     let Some(token) = load_linear_token()? else {
         return Err("Connect Linear before creating issues.".to_string());
     };
-    let Some(team_id) = team_id.filter(|value| !value.trim().is_empty()) else {
-        return Err("A Linear team is required to create an issue.".to_string());
-    };
+    let team_id = resolve_linear_team_id(&token, team).await?;
     let response: LinearGraphqlResponse<LinearIssueCreateData> = linear_graphql(
         &token,
         r#"
@@ -263,8 +395,14 @@ pub async fn linear_create_issue(
               identifier
               title
               url
-              state {
+              team {
+                id
                 name
+              }
+              state {
+                id
+                name
+                type
               }
             }
           }
@@ -287,6 +425,83 @@ pub async fn linear_create_issue(
         .issue_create
         .issue
         .ok_or_else(|| "Linear did not return the created issue.".to_string())?;
+    Ok(linear_issue_from_node(issue))
+}
+
+pub async fn linear_get_issue(issue_id: String) -> Result<LinearIssue, String> {
+    let Some(token) = load_linear_token()? else {
+        return Err("Connect Linear before linking issues.".to_string());
+    };
+    let issue = linear_issue_node_by_id(&token, &issue_id).await?;
+    Ok(linear_issue_from_node(issue))
+}
+
+pub async fn linear_update_issue_state(
+    issue_id: String,
+    awencode_status: String,
+    preferred_state_name: Option<String>,
+) -> Result<LinearIssue, String> {
+    let Some(token) = load_linear_token()? else {
+        return Err("Connect Linear before syncing issue state.".to_string());
+    };
+    let issue = linear_issue_node_by_id(&token, &issue_id).await?;
+    let team_id = issue
+        .team
+        .as_ref()
+        .map(|team| team.id.clone())
+        .ok_or_else(|| format!("Linear issue {issue_id} did not include a team."))?;
+    let workflow_state = linear_target_workflow_state(
+        &token,
+        &team_id,
+        &awencode_status,
+        preferred_state_name.as_deref(),
+    )
+    .await?;
+    if issue.state.as_ref().and_then(|state| state.id.as_deref())
+        == Some(workflow_state.id.as_str())
+    {
+        return Ok(linear_issue_from_node(issue));
+    }
+    let response: LinearGraphqlResponse<LinearIssueUpdateData> = linear_graphql(
+        &token,
+        r#"
+        mutation UpdateIssueState($id: String!, $stateId: String!) {
+          issueUpdate(id: $id, input: { stateId: $stateId }) {
+            success
+            issue {
+              id
+              identifier
+              title
+              url
+              team {
+                id
+                name
+              }
+              state {
+                id
+                name
+                type
+              }
+            }
+          }
+        }
+        "#,
+        json!({
+            "id": issue_id,
+            "stateId": workflow_state.id,
+        }),
+    )
+    .await?;
+    let data = response.data.ok_or_else(|| {
+        linear_graphql_error_message(response.errors, "Linear issue update failed.")
+    })?;
+    if !data.issue_update.success {
+        return Err("Linear issue update failed.".to_string());
+    }
+    let issue = data
+        .issue_update
+        .issue
+        .ok_or_else(|| "Linear did not return the updated issue.".to_string())?;
     Ok(linear_issue_from_node(issue))
 }
 
@@ -444,6 +659,329 @@ async fn linear_viewer_from_token(token: &str) -> Result<Option<LinearUser>, Str
     Ok(Some(data.viewer))
 }
 
+async fn linear_teams_from_token(token: &str) -> Result<Vec<LinearTeam>, String> {
+    let response: LinearGraphqlResponse<LinearTeamsData> = linear_graphql(
+        token,
+        r#"
+        query Teams {
+          teams {
+            nodes {
+              id
+              name
+            }
+          }
+        }
+        "#,
+        json!({}),
+    )
+    .await?;
+    let data = response.data.ok_or_else(|| {
+        linear_graphql_error_message(response.errors, "Linear did not return teams.")
+    })?;
+    Ok(data
+        .teams
+        .nodes
+        .into_iter()
+        .map(|team| LinearTeam {
+            id: team.id,
+            name: team.name,
+        })
+        .collect())
+}
+
+async fn resolve_linear_team_id(token: &str, raw_team: Option<String>) -> Result<String, String> {
+    let teams = linear_teams_from_token(token).await?;
+    if teams.is_empty() {
+        return Err("No Linear teams are available for this account.".to_string());
+    }
+
+    let query = raw_team.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
+    if let Some(query) = query {
+        if let Some(team) = teams.iter().find(|team| team.id == query) {
+            return Ok(team.id.clone());
+        }
+
+        let exact_matches: Vec<&LinearTeam> = teams
+            .iter()
+            .filter(|team| team.name.eq_ignore_ascii_case(&query))
+            .collect();
+        if exact_matches.len() == 1 {
+            return Ok(exact_matches[0].id.clone());
+        }
+
+        let lowered = query.to_lowercase();
+        let partial_matches: Vec<&LinearTeam> = teams
+            .iter()
+            .filter(|team| team.name.to_lowercase().contains(&lowered))
+            .collect();
+        if partial_matches.len() == 1 {
+            return Ok(partial_matches[0].id.clone());
+        }
+
+        return Err(format!(
+            "Couldn't resolve Linear team \"{query}\". Available teams: {}",
+            linear_team_names(&teams)
+        ));
+    }
+
+    if teams.len() == 1 {
+        return Ok(teams[0].id.clone());
+    }
+
+    Err(format!(
+        "A Linear team is required. Available teams: {}",
+        linear_team_names(&teams)
+    ))
+}
+
+async fn linear_issue_node_by_id(token: &str, issue_id: &str) -> Result<LinearIssueNode, String> {
+    let response: LinearGraphqlResponse<LinearIssueLookupData> = linear_graphql(
+        token,
+        r#"
+        query Issue($id: String!) {
+          issue(id: $id) {
+            id
+            identifier
+            title
+            url
+            team {
+              id
+              name
+            }
+            state {
+              id
+              name
+              type
+            }
+          }
+        }
+        "#,
+        json!({
+            "id": issue_id,
+        }),
+    )
+    .await?;
+    let data = response.data.ok_or_else(|| {
+        linear_graphql_error_message(
+            response.errors,
+            "Linear did not return the requested issue.",
+        )
+    })?;
+    if let Some(issue) = data.issue {
+        return Ok(issue);
+    }
+
+    let response: LinearGraphqlResponse<LinearIssueSearchData> = linear_graphql(
+        token,
+        r#"
+        query IssuesByIdentifier($identifier: String!) {
+          issues(filter: { identifier: { eq: $identifier } }) {
+            nodes {
+              id
+              identifier
+              title
+              url
+              team {
+                id
+                name
+              }
+              state {
+                id
+                name
+                type
+              }
+            }
+          }
+        }
+        "#,
+        json!({
+            "identifier": issue_id,
+        }),
+    )
+    .await?;
+    let data = response.data.ok_or_else(|| {
+        linear_graphql_error_message(
+            response.errors,
+            "Linear did not return the requested issue.",
+        )
+    })?;
+    data.issues
+        .nodes
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("Linear issue {issue_id} was not found."))
+}
+
+async fn linear_workflow_states(
+    token: &str,
+    team_id: &str,
+) -> Result<Vec<LinearWorkflowStateNode>, String> {
+    let response: LinearGraphqlResponse<LinearWorkflowStatesData> = linear_graphql(
+        token,
+        r#"
+        query WorkflowStates($teamId: ID!) {
+          workflowStates(filter: {
+            team: { id: { eq: $teamId } }
+          }) {
+            nodes {
+              id
+              name
+              type
+              position
+            }
+          }
+        }
+        "#,
+        json!({
+            "teamId": team_id,
+        }),
+    )
+    .await?;
+    let data = response.data.ok_or_else(|| {
+        linear_graphql_error_message(response.errors, "Linear did not return workflow states.")
+    })?;
+    Ok(data.workflow_states.nodes)
+}
+
+async fn linear_target_workflow_state(
+    token: &str,
+    team_id: &str,
+    awencode_status: &str,
+    preferred_state_name: Option<&str>,
+) -> Result<LinearWorkflowStateNode, String> {
+    let mut states = linear_workflow_states(token, team_id).await?;
+    if states.is_empty() {
+        return Err("No Linear workflow states were found for this team.".to_string());
+    }
+    states.sort_by(|a, b| {
+        let a_pos = a.position.unwrap_or(f64::INFINITY);
+        let b_pos = b.position.unwrap_or(f64::INFINITY);
+        a_pos
+            .partial_cmp(&b_pos)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    if let Some(preferred_state_name) = preferred_state_name.and_then(trimmed_non_empty) {
+        return find_state_by_exact_name(&states, preferred_state_name)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Configured Linear state \"{preferred_state_name}\" was not found for this team."
+                )
+            });
+    }
+
+    pick_linear_workflow_state(&states, awencode_status).cloned().ok_or_else(|| {
+        format!("No matching Linear workflow state was found for Awencode status \"{awencode_status}\".")
+    })
+}
+
+fn pick_linear_workflow_state<'a>(
+    states: &'a [LinearWorkflowStateNode],
+    awencode_status: &str,
+) -> Option<&'a LinearWorkflowStateNode> {
+    match awencode_status {
+        "review" => find_state_by_name(
+            states,
+            &[
+                "in review",
+                "review",
+                "qa",
+                "testing",
+                "verify",
+                "verification",
+                "ready for review",
+            ],
+        )
+        .or_else(|| find_state_by_type(states, "started")),
+        "active" => find_state_by_name(
+            states,
+            &["in progress", "progress", "started", "doing", "working"],
+        )
+        .or_else(|| find_state_by_type(states, "started")),
+        "deployed" => {
+            find_completed_state(states).or_else(|| find_state_by_type(states, "completed"))
+        }
+        _ => find_state_by_name(
+            states,
+            &["triage", "backlog", "todo", "to do", "queued", "next up"],
+        )
+        .or_else(|| find_state_by_type(states, "unstarted")),
+    }
+}
+
+fn find_state_by_name<'a>(
+    states: &'a [LinearWorkflowStateNode],
+    needles: &[&str],
+) -> Option<&'a LinearWorkflowStateNode> {
+    states.iter().find(|state| {
+        let name = state.name.to_lowercase();
+        needles.iter().any(|needle| name.contains(needle))
+    })
+}
+
+fn find_state_by_exact_name<'a>(
+    states: &'a [LinearWorkflowStateNode],
+    name: &str,
+) -> Option<&'a LinearWorkflowStateNode> {
+    states
+        .iter()
+        .find(|state| state.name.eq_ignore_ascii_case(name))
+}
+
+fn find_state_by_type<'a>(
+    states: &'a [LinearWorkflowStateNode],
+    state_type: &str,
+) -> Option<&'a LinearWorkflowStateNode> {
+    states
+        .iter()
+        .find(|state| state.state_type.as_deref() == Some(state_type))
+}
+
+fn find_completed_state(states: &[LinearWorkflowStateNode]) -> Option<&LinearWorkflowStateNode> {
+    let negative = [
+        "canceled",
+        "cancelled",
+        "duplicate",
+        "declined",
+        "won't",
+        "wont",
+        "not doing",
+    ];
+    let preferred = [
+        "done",
+        "completed",
+        "complete",
+        "shipped",
+        "deployed",
+        "closed",
+    ];
+    states
+        .iter()
+        .find(|state| {
+            let name = state.name.to_lowercase();
+            preferred.iter().any(|needle| name.contains(needle))
+                && !negative.iter().any(|needle| name.contains(needle))
+        })
+        .or_else(|| {
+            states.iter().find(|state| {
+                state.state_type.as_deref() == Some("completed")
+                    && !negative
+                        .iter()
+                        .any(|needle| state.name.to_lowercase().contains(needle))
+            })
+        })
+}
+
 async fn linear_graphql<T: for<'de> Deserialize<'de>>(
     token: &str,
     query: &str,
@@ -470,10 +1008,18 @@ async fn linear_graphql<T: for<'de> Deserialize<'de>>(
             .unwrap_or_else(|_| "Linear request failed".to_string());
         return Err(format!("Linear request failed: {message}"));
     }
-    response
-        .json::<LinearGraphqlResponse<T>>()
+    let body = response
+        .text()
         .await
-        .map_err(|err| format!("Failed to parse Linear response: {err}"))
+        .map_err(|err| format!("Failed to read Linear response body: {err}"))?;
+    serde_json::from_str::<LinearGraphqlResponse<T>>(&body).map_err(|err| {
+        let preview = if body.chars().count() > 600 {
+            format!("{}...", body.chars().take(600).collect::<String>())
+        } else {
+            body
+        };
+        format!("Failed to parse Linear response: {err}. Body: {preview}")
+    })
 }
 
 fn linear_graphql_error_message(errors: Option<Vec<LinearGraphqlError>>, fallback: &str) -> String {
@@ -483,13 +1029,33 @@ fn linear_graphql_error_message(errors: Option<Vec<LinearGraphqlError>>, fallbac
         .unwrap_or_else(|| fallback.to_string())
 }
 
+fn linear_team_names(teams: &[LinearTeam]) -> String {
+    teams
+        .iter()
+        .map(|team| team.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn trimmed_non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 fn linear_issue_from_node(node: LinearIssueNode) -> LinearIssue {
     LinearIssue {
         id: node.id,
         identifier: node.identifier,
         title: node.title,
         url: node.url,
-        state_name: node.state.map(|state| state.name),
+        state_name: node.state.as_ref().map(|state| state.name.clone()),
+        state_type: node.state.and_then(|state| state.state_type),
+        team_id: node.team.as_ref().map(|team| team.id.clone()),
+        team_name: node.team.and_then(|team| team.name),
     }
 }
 

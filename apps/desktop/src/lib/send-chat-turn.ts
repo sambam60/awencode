@@ -16,10 +16,13 @@ import {
   getSelectedReasoningEffort,
   useSettingsStore,
 } from "@/lib/stores/settings-store";
+import { buildLinearDynamicTools } from "@/lib/linear-thread-tools";
 import type { Attachment } from "@/components/chat/ComposeArea";
 import { invoke } from "@tauri-apps/api/core";
 
 const NEW_THREAD_TITLE = "New thread";
+const LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION =
+  "When Linear auto-sync is enabled, do not directly change the status of linked Linear issues. Change the Awencode thread status instead, and let Awencode sync linked Linear issues automatically.";
 
 type ApiKeyStatuses = {
   openaiConfigured: boolean;
@@ -53,6 +56,12 @@ function appendLocalAgentError(agentId: string, content: string) {
     role: "agent",
     content,
   });
+}
+
+function linearAutoSyncDeveloperInstruction(): string | null {
+  return useSettingsStore.getState().linearAutoSyncEnabled
+    ? LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION
+    : null;
 }
 
 async function maybeFallbackToSavedOpenAiApiKey(
@@ -280,6 +289,8 @@ export async function sendChatTurn(
           cwd: projectPath ?? undefined,
           model: getSelectedModel().id,
           modelProvider: getSelectedModel().provider,
+          developerInstructions: linearAutoSyncDeveloperInstruction(),
+          dynamicTools: buildLinearDynamicTools(),
         });
       try {
         handleStartedThread(await startThread());
@@ -318,6 +329,21 @@ export async function sendChatTurn(
       }
     }
     if (!threadId) return;
+
+    if (agent.codexThreadId) {
+      try {
+        await rpcRequest("thread/resume", {
+          threadId,
+          cwd: projectPath ?? undefined,
+          model: getSelectedModel().id,
+          modelProvider: getSelectedModel().provider,
+          developerInstructions: linearAutoSyncDeveloperInstruction(),
+          dynamicTools: buildLinearDynamicTools(),
+        });
+      } catch (resumeError) {
+        console.warn("thread/resume failed while refreshing dynamic tools", resumeError);
+      }
+    }
 
     if (wasUnsetTitle) {
       const latestTitle =
@@ -391,6 +417,8 @@ export async function sendChatTurn(
           cwd: projectPath ?? undefined,
           model: getSelectedModel().id,
           modelProvider: getSelectedModel().provider,
+          developerInstructions: linearAutoSyncDeveloperInstruction(),
+          dynamicTools: buildLinearDynamicTools(),
         });
         return true;
       } catch (resumeError) {

@@ -138,12 +138,14 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
     }
     const {
       finalizeAgentThinking,
+      finalizeRunningAgentActivities,
       flushAgentStreamingBuffer,
       setAgentTurnInProgress,
       setAgentStatus,
       setAgentCurrentTurnId,
     } = useThreadStore.getState();
     finalizeAgentThinking(agent.id);
+    finalizeRunningAgentActivities(agent.id);
     flushAgentStreamingBuffer(agent.id);
     setAgentTurnInProgress(agent.id, false);
     setAgentCurrentTurnId(agent.id, null);

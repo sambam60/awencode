@@ -7,6 +7,8 @@ interface QueuedMessagesPanelProps {
   agentId: string;
 }
 
+const EMPTY_QUEUED_MESSAGES: QueuedMessage[] = [];
+
 function QueuedMessageRow({
   msg,
   index,
@@ -128,7 +130,7 @@ function QueuedMessageRow({
 
 export function QueuedMessagesPanel({ agentId }: QueuedMessagesPanelProps) {
   const messages = useChatUiStore(
-    (s) => s.queuedMessagesByAgentId[agentId] ?? [],
+    (s) => s.queuedMessagesByAgentId[agentId] ?? EMPTY_QUEUED_MESSAGES,
   );
   const [collapsed, setCollapsed] = useState(false);
 

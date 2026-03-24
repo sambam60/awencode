@@ -4,6 +4,9 @@ import { persist } from "zustand/middleware";
 export type ModelProviderId = "openai" | "openrouter" | "azure-openai-custom";
 
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type LinearSyncStatusKey = "queued" | "active" | "review" | "deployed";
+
+export type LinearStatusMappings = Record<LinearSyncStatusKey, string | null>;
 
 export interface CuratedModelOption {
   id: string;
@@ -117,6 +120,8 @@ export const CURATED_MODELS: CuratedModelOption[] = [
 interface SettingsState {
   azureBaseUrl: string;
   azureDeployments: string[];
+  linearAutoSyncEnabled: boolean;
+  linearStatusMappings: LinearStatusMappings;
 
   /** Selected model (must be enabled; store enforces this). */
   selectedModelId: string;
@@ -130,6 +135,8 @@ interface SettingsState {
   setAzureBaseUrl: (value: string) => void;
   addAzureDeployment: (value: string) => boolean;
   removeAzureDeployment: (value: string) => void;
+  setLinearAutoSyncEnabled: (enabled: boolean) => void;
+  setLinearStatusMapping: (status: LinearSyncStatusKey, linearStateName: string | null) => void;
   setSelectedModelId: (id: string) => void;
   setModelProviderOverride: (modelId: string, provider: ModelProviderId) => void;
   setSelectedReasoningEffort: (effort: ReasoningEffort) => void;
@@ -139,6 +146,12 @@ interface SettingsState {
 
 const DEFAULT_SELECTED_MODEL = "gpt-5.3-codex";
 const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+const DEFAULT_LINEAR_STATUS_MAPPINGS: LinearStatusMappings = {
+  queued: null,
+  active: null,
+  review: null,
+  deployed: null,
+};
 
 function defaultEnabledModels(): Record<string, boolean> {
   return CURATED_MODELS.reduce((acc, m) => {
@@ -162,6 +175,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set, get) => ({
       azureBaseUrl: "",
       azureDeployments: [],
+      linearAutoSyncEnabled: true,
+      linearStatusMappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
 
       selectedModelId: DEFAULT_SELECTED_MODEL,
       modelProviderOverrides: {},
@@ -205,6 +220,16 @@ export const useSettingsStore = create<SettingsState>()(
           };
         });
       },
+
+      setLinearAutoSyncEnabled: (enabled) => set({ linearAutoSyncEnabled: enabled }),
+
+      setLinearStatusMapping: (status, linearStateName) =>
+        set((s) => ({
+          linearStatusMappings: {
+            ...s.linearStatusMappings,
+            [status]: linearStateName?.trim() || null,
+          },
+        })),
 
       setSelectedModelId: (id) => {
         const enabled = get().enabledModels;
@@ -251,7 +276,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "awencode-settings",
-      version: 3,
+      version: 4,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== "object") {
           return persistedState;
@@ -296,11 +321,39 @@ export const useSettingsStore = create<SettingsState>()(
         ) {
           nextState.selectedModelId = DEFAULT_SELECTED_MODEL;
         }
+        nextState.linearAutoSyncEnabled =
+          typeof nextState.linearAutoSyncEnabled === "boolean"
+            ? nextState.linearAutoSyncEnabled
+            : true;
+        const rawLinearMappings =
+          nextState.linearStatusMappings && typeof nextState.linearStatusMappings === "object"
+            ? (nextState.linearStatusMappings as Record<string, unknown>)
+            : {};
+        nextState.linearStatusMappings = {
+          queued:
+            typeof rawLinearMappings.queued === "string" && rawLinearMappings.queued.trim()
+              ? rawLinearMappings.queued.trim()
+              : null,
+          active:
+            typeof rawLinearMappings.active === "string" && rawLinearMappings.active.trim()
+              ? rawLinearMappings.active.trim()
+              : null,
+          review:
+            typeof rawLinearMappings.review === "string" && rawLinearMappings.review.trim()
+              ? rawLinearMappings.review.trim()
+              : null,
+          deployed:
+            typeof rawLinearMappings.deployed === "string" && rawLinearMappings.deployed.trim()
+              ? rawLinearMappings.deployed.trim()
+              : null,
+        };
         return nextState;
       },
       partialize: (s) => ({
         azureBaseUrl: s.azureBaseUrl,
         azureDeployments: s.azureDeployments,
+        linearAutoSyncEnabled: s.linearAutoSyncEnabled,
+        linearStatusMappings: s.linearStatusMappings,
         selectedModelId: s.selectedModelId,
         modelProviderOverrides: s.modelProviderOverrides,
         selectedReasoningEffort: s.selectedReasoningEffort,

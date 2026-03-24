@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { linearIssueMeta, type LinearIssue } from "@/lib/linear";
 import { getAgentTimeLabel, getAgentTokenLabel } from "@/lib/agent-metrics";
 import { agentStatusLabel, agentStatusVisual, statusColor } from "@/lib/status";
 import { GlassConfirmDialog } from "@/components/ui/GlassConfirmDialog";
@@ -28,7 +29,7 @@ import { rpcRequest } from "@/lib/rpc-client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
-import type { Agent, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
+import type { Agent, AgentActivity, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
 interface DetailPanelProps {
   agent: Agent;
@@ -38,6 +39,15 @@ interface DetailPanelProps {
 
 const TABS = ["status", "chat", "files"] as const;
 type Tab = (typeof TABS)[number];
+type GitThreadActionState = {
+  currentBranch: string | null;
+  branchMatchesThread: boolean;
+  hasThreadStagedChanges: boolean;
+  hasUpstream: boolean;
+  branchAhead: boolean;
+  canCommit: boolean;
+  canPush: boolean;
+};
 
 function githubRepoPath(originUrl: string | null | undefined): string | null {
   if (!originUrl) return null;
@@ -134,6 +144,85 @@ function AgentPlanBlock({ steps }: { steps: AgentPlanStep[] }) {
   );
 }
 
+function isThinkingActivity(activity: AgentActivity): boolean {
+  return activity.kind === "log" && activity.label === "thinking";
+}
+
+function activityTitle(activity: AgentActivity): string {
+  if (isThinkingActivity(activity)) return "Thinking";
+  if (activity.kind === "shell") return activity.shellCommand?.trim() || "Shell";
+  return activity.label;
+}
+
+function activityMeta(activity: AgentActivity): string {
+  if (activity.status === "running") {
+    return "live";
+  }
+  if (activity.durationMs == null) {
+    return activity.kind.replace("_", " ");
+  }
+  return activity.durationMs < 1000
+    ? `${activity.durationMs}ms`
+    : `${(activity.durationMs / 1000).toFixed(1)}s`;
+}
+
+function DetailActivityFeed({
+  activities,
+  streamingBuffer,
+}: {
+  activities: AgentActivity[];
+  streamingBuffer?: string;
+}) {
+  const visibleActivities = activities.slice(-6);
+  const liveDraft = streamingBuffer?.trim() ?? "";
+
+  if (visibleActivities.length === 0 && !liveDraft) return null;
+
+  return (
+    <div className="mb-3 space-y-2">
+      {visibleActivities.map((activity) => {
+        const detail = activity.detail?.trim() ?? "";
+        return (
+          <div
+            key={activity.id}
+            className="rounded-lg border border-border-light bg-bg-card px-3 py-2.5"
+          >
+            <div className="flex items-center gap-2">
+              {activity.status === "running" ? (
+                <Loader2 size={12} strokeWidth={1.9} className="shrink-0 animate-spin text-accent-blue" />
+              ) : (
+                <CircleDot size={12} strokeWidth={1.75} className="shrink-0 text-text-faint" />
+              )}
+              <div className="min-w-0 flex-1 text-[12px] text-text-primary truncate">
+                {activityTitle(activity)}
+              </div>
+              <div className="shrink-0 text-[9.5px] uppercase tracking-widest text-text-faint">
+                {activityMeta(activity)}
+              </div>
+            </div>
+            {detail ? (
+              <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-[11.5px] leading-relaxed text-text-secondary [overflow-wrap:anywhere]">
+                {detail}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+
+      {liveDraft ? (
+        <div className="rounded-lg border border-border-light bg-bg-secondary/70 px-3 py-2.5">
+          <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-widest text-text-faint">
+            Drafting reply
+          </div>
+          <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-text-primary">
+            {liveDraft}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PrStatusRow({
   icon,
   label,
@@ -159,25 +248,35 @@ function GitActionRow({
   label,
   onClick,
   disabled = false,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={cn(
-        "flex w-full items-center gap-3 rounded-md px-1 py-2 text-left transition-colors duration-120",
+        "group flex w-full items-center gap-3 rounded-md border px-2 py-2 text-left transition-[background-color,border-color,color,opacity] duration-120",
         disabled
-          ? "cursor-not-allowed text-text-faint opacity-55"
-          : "cursor-pointer text-text-primary hover:bg-bg-secondary/70",
+          ? "cursor-not-allowed border-transparent text-text-faint opacity-55"
+          : "cursor-pointer border-transparent text-text-secondary hover:border-border-light hover:bg-bg-secondary/70 hover:text-text-primary",
       )}
     >
-      <span className="shrink-0 text-text-tertiary">{icon}</span>
+      <span
+        className={cn(
+          "shrink-0 transition-colors duration-120",
+          disabled ? "text-text-faint" : "text-text-tertiary group-hover:text-text-primary",
+        )}
+      >
+        {icon}
+      </span>
       <span className="font-sans text-[13px]">{label}</span>
     </button>
   );
@@ -188,11 +287,13 @@ function PrStatusCard({
   prUrl,
   onOpenPr,
   framed = true,
+  error,
 }: {
   prStatus: PrStatus | null;
   prUrl: string | null;
   onOpenPr: () => void;
   framed?: boolean;
+  error?: string | null;
 }) {
   const checksIcon =
     prStatus?.checksState === "success" ? (
@@ -205,6 +306,12 @@ function PrStatusCard({
       <CircleDashed size={14} strokeWidth={1.5} className="text-text-faint" />
     );
 
+  const noDataLabel = error
+    ? "Could not load PR status"
+    : prUrl
+      ? "No open PR found for this branch"
+      : "No pull request yet";
+
   const checksLabel =
     prStatus?.checksState === "success"
       ? "Checks successful"
@@ -212,9 +319,7 @@ function PrStatusCard({
         ? "Checks failing"
         : prStatus?.checksState === "pending"
           ? "Checks running"
-          : prUrl
-            ? "Connect GitHub token to see checks"
-            : "No pull request yet";
+          : noDataLabel;
 
   const approvalsIcon = (
     <UserCheck size={14} strokeWidth={1.5} className="text-text-faint" />
@@ -262,9 +367,7 @@ function PrStatusCard({
               ? prStatus.approvals === 0
                 ? "No approvals yet"
                 : `${prStatus.approvals} approval${prStatus.approvals === 1 ? "" : "s"}`
-              : prUrl
-                ? "PR metadata unavailable"
-                : "No approvals yet"
+              : noDataLabel
           }
         />
         {prStatus?.comments ? (
@@ -291,9 +394,7 @@ function PrStatusCard({
               ? prStatus.mergeable
                 ? "Ready to merge"
                 : "Not ready to merge"
-              : prUrl
-                ? "PR ready state unavailable"
-                : "No pull request yet"
+              : noDataLabel
           }
           action={
             prStatus?.mergeable && prUrl ? (
@@ -307,6 +408,11 @@ function PrStatusCard({
             ) : undefined
           }
         />
+        {error ? (
+          <div className="py-2.5 text-[11px] leading-relaxed text-accent-red">
+            {error}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -317,21 +423,33 @@ function GitOverviewCard({
   prUrl,
   existingPrUrl,
   prActionLabel,
+  prError,
   onCommit,
   onPush,
   onViewPr,
   onCreateBranch,
-  gitDisabled,
+  commitDisabled,
+  pushDisabled,
+  branchDisabled,
+  commitTitle,
+  pushTitle,
+  gitHint,
 }: {
   prStatus: PrStatus | null;
   prUrl: string | null;
   existingPrUrl: string | null;
   prActionLabel: string;
+  prError?: string | null;
   onCommit: () => void;
   onPush: () => void;
   onViewPr: () => void;
   onCreateBranch: () => void;
-  gitDisabled: boolean;
+  commitDisabled: boolean;
+  pushDisabled: boolean;
+  branchDisabled: boolean;
+  commitTitle?: string;
+  pushTitle?: string;
+  gitHint?: string | null;
 }) {
   return (
     <div className="border border-border-light rounded-lg overflow-hidden bg-bg-card">
@@ -344,13 +462,15 @@ function GitOverviewCard({
             icon={<GitCommit size={16} strokeWidth={1.8} />}
             label="Commit"
             onClick={onCommit}
-            disabled={gitDisabled}
+            disabled={commitDisabled}
+            title={commitTitle}
           />
           <GitActionRow
             icon={<CloudUpload size={16} strokeWidth={1.8} />}
             label="Push"
             onClick={onPush}
-            disabled={gitDisabled}
+            disabled={pushDisabled}
+            title={pushTitle}
           />
           <GitActionRow
             icon={<GitPullRequest size={16} strokeWidth={1.8} />}
@@ -362,9 +482,12 @@ function GitOverviewCard({
             icon={<GitBranch size={16} strokeWidth={1.8} />}
             label="Create branch"
             onClick={onCreateBranch}
-            disabled={gitDisabled}
+            disabled={branchDisabled}
           />
         </div>
+        {gitHint ? (
+          <p className="mt-2.5 text-[11px] leading-relaxed text-text-tertiary">{gitHint}</p>
+        ) : null}
       </div>
       <div className="border-t border-border-light" />
       <PrStatusCard
@@ -372,7 +495,59 @@ function GitOverviewCard({
         prUrl={existingPrUrl}
         onOpenPr={onViewPr}
         framed={false}
+        error={prError}
       />
+    </div>
+  );
+}
+
+function LinkedLinearIssuesCard({
+  issues,
+  onOpenIssue,
+}: {
+  issues: LinearIssue[];
+  onOpenIssue: (url: string) => void;
+}) {
+  return (
+    <div className="border border-border-light rounded-lg overflow-hidden bg-bg-card">
+      <div className="px-4 py-3 border-b border-border-light">
+        <div className="flex items-center">
+          <img
+            src="/linear_wordmark.svg"
+            alt="Linear"
+            className="h-3.5 w-auto max-w-[100px] shrink-0 opacity-40 invert dark:invert-0"
+          />
+        </div>
+        <div className="mt-0.5 text-[11px] leading-relaxed text-text-tertiary">
+          This thread is linked to {issues.length} Linear issue{issues.length === 1 ? "" : "s"}.
+        </div>
+      </div>
+
+      <div className="px-4 py-3 space-y-2">
+        {issues.map((issue) => (
+          <div
+            key={issue.id}
+            className="flex items-start justify-between gap-3 rounded-md border border-border-light bg-bg-secondary/45 px-3 py-2.5"
+          >
+            <div className="min-w-0">
+              <div className="text-[9.5px] uppercase tracking-widest text-text-faint">
+                {linearIssueMeta(issue)}
+              </div>
+              <div className="mt-1 text-[12px] leading-relaxed text-text-primary">
+                {issue.title}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenIssue(issue.url)}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border-default px-2 py-1 text-[10.5px] text-text-secondary hover:bg-bg-card transition-colors duration-120 cursor-pointer"
+            >
+              Open
+              <ArrowUpRight size={11} strokeWidth={1.75} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -397,6 +572,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const [gitError, setGitError] = useState<string | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
   const [newBranchName, setNewBranchName] = useState("");
+  const [gitActionState, setGitActionState] = useState<GitThreadActionState | null>(null);
   const removeAgent = useThreadStore((s) => s.removeAgent);
   const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
@@ -410,26 +586,45 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const canArchive = Boolean(threadId);
   const canRunGitActions = Boolean(projectPath);
   const modelsUsed = agent.modelsUsed ?? [];
+  const linkedLinearIssues = agent.linkedLinearIssues ?? [];
 
   const [detectedPrUrl, setDetectedPrUrl] = useState<string | null>(null);
+  const [prError, setPrError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectPath) return;
     let cancelled = false;
-    invoke<{ number: string; url: string } | null>("get_branch_pr", {
+    invoke<{ number: number; url: string } | null>("get_branch_pr", {
       path: projectPath,
+      branch: agent.branch || null,
     })
       .then((result) => {
         if (cancelled) return;
-        if (!result) {
-          setDetectedPrUrl(null);
-          return;
-        }
-        setDetectedPrUrl(result.url);
+        setDetectedPrUrl(result?.url ?? null);
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [projectPath, agent.branch]);
+
+  useEffect(() => {
+    if (!projectPath) {
+      setGitActionState(null);
+      return;
+    }
+    let cancelled = false;
+    invoke<GitThreadActionState>("get_git_thread_action_state", {
+      path: projectPath,
+      branch: agent.branch || null,
+      files: agent.files,
+    })
+      .then((state) => {
+        if (!cancelled) setGitActionState(state);
+      })
+      .catch(() => {
+        if (!cancelled) setGitActionState(null);
+      });
+    return () => { cancelled = true; };
+  }, [projectPath, agent.branch, agent.files]);
 
   const existingPrUrl = currentPrUrl(agent) ?? detectedPrUrl;
   const prUrl = existingPrUrl ?? comparePrUrl(agent);
@@ -437,6 +632,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
   useEffect(() => {
     if (!projectPath) return;
+    setPrError(null);
     invoke<{
       checksState: "success" | "failure" | "pending" | "none";
       approvals: number;
@@ -444,28 +640,40 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       mergeable: boolean;
       prNumber: number | null;
       prUrl: string | null;
-    } | null>("github_get_pr_status", { path: projectPath })
+    } | null>("github_get_pr_status", {
+      path: projectPath,
+      branch: agent.branch || null,
+    })
       .then((prStatus) => {
         updateAgentPrStatus(agent.id, prStatus);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         updateAgentPrStatus(agent.id, null);
+        const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "PR status fetch failed";
+        setPrError(msg);
       });
   }, [agent.id, agent.branch, projectPath, updateAgentPrStatus]);
 
-  async function refreshGitInfo() {
+  async function refreshGitInfo(branchOverride?: string) {
     if (!projectPath) return;
     try {
+      const effectiveBranch = branchOverride ?? agent.branch;
       const info = await invoke<{
         branch?: string | null;
         sha?: string | null;
         originUrl?: string | null;
       }>("get_git_info", { path: projectPath });
       updateAgentGitInfo(agent.id, {
-        branch: info.branch ?? undefined,
         sha: info.sha ?? undefined,
         originUrl: info.originUrl ?? undefined,
       });
+      const threadGitState = await invoke<GitThreadActionState>("get_git_thread_action_state", {
+        path: projectPath,
+        branch: effectiveBranch || null,
+        files: agent.files,
+      }).catch(() => null);
+      setGitActionState(threadGitState);
+      setPrError(null);
       const prStatus = await invoke<{
         checksState: "success" | "failure" | "pending" | "none";
         approvals: number;
@@ -473,10 +681,14 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         mergeable: boolean;
         prNumber: number | null;
         prUrl: string | null;
-      } | null>("github_get_pr_status", { path: projectPath });
+      } | null>("github_get_pr_status", {
+        path: projectPath,
+        branch: effectiveBranch || null,
+      });
       updateAgentPrStatus(agent.id, prStatus);
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : typeof err === "string" ? err : null;
+      if (msg) setPrError(msg);
     }
   }
 
@@ -526,7 +738,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   }
 
   async function runCommit() {
-    if (!projectPath || gitBusy !== null) return;
+    if (!projectPath || gitBusy !== null || !gitActionState?.canCommit) return;
     setGitError(null);
     setGitBusy("commit");
     try {
@@ -546,7 +758,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   }
 
   async function runPush() {
-    if (!projectPath) return;
+    if (!projectPath || gitBusy !== null || !gitActionState?.canPush) return;
     setGitError(null);
     setGitBusy("push");
     try {
@@ -577,19 +789,43 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
     setGitError(null);
     setGitBusy("branch");
     try {
+      const branchName = newBranchName.trim();
       await invoke("git_create_branch", {
         path: projectPath,
-        name: newBranchName.trim(),
+        name: branchName,
       });
+      updateAgentGitInfo(agent.id, { branch: branchName });
       setNewBranchName("");
       setGitDialog(null);
-      await refreshGitInfo();
+      await refreshGitInfo(branchName);
     } catch (e) {
       setGitError(e instanceof Error ? e.message : "Create branch failed");
     } finally {
       setGitBusy(null);
     }
   }
+
+  async function openLinearUrl(url: string) {
+    try {
+      await invoke("open_url", { url });
+    } catch (error) {
+      setGitError(error instanceof Error ? error.message : "Couldn't open Linear");
+    }
+  }
+
+  const threadBranch = agent.branch.trim();
+  const commitDisabled = !canRunGitActions || gitBusy !== null || !gitActionState?.canCommit;
+  const pushDisabled = !canRunGitActions || gitBusy !== null || !gitActionState?.canPush;
+  const branchDisabled = !canRunGitActions || gitBusy !== null;
+  const gitHint = !projectPath
+    ? "Open a project workspace to use git actions."
+    : threadBranch && gitActionState && !gitActionState.branchMatchesThread
+      ? `Checkout ${threadBranch} to commit or push changes for this thread.`
+      : gitActionState && !gitActionState.hasThreadStagedChanges && !gitActionState.branchAhead
+        ? "Stage this thread's files to enable commit and push."
+        : null;
+  const commitTitle = commitDisabled ? gitHint ?? "No staged changes for this thread" : undefined;
+  const pushTitle = pushDisabled ? gitHint ?? "Nothing to push for this thread" : undefined;
 
   return (
     <>
@@ -779,6 +1015,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               prUrl={prUrl}
               existingPrUrl={existingPrUrl}
               prActionLabel={prActionLabel}
+              prError={prError}
               onCommit={() => {
                 setGitError(null);
                 setGitDialog("commit");
@@ -793,15 +1030,36 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
                 setGitError(null);
                 setGitDialog("branch");
               }}
-              gitDisabled={!canRunGitActions || gitBusy !== null}
+              commitDisabled={commitDisabled}
+              pushDisabled={pushDisabled}
+              branchDisabled={branchDisabled}
+              commitTitle={commitTitle}
+              pushTitle={pushTitle}
+              gitHint={gitHint}
             />
+
+            {linkedLinearIssues.length > 0 ? (
+              <LinkedLinearIssuesCard
+                issues={linkedLinearIssues}
+                onOpenIssue={(url) => {
+                  void openLinearUrl(url);
+                }}
+              />
+            ) : null}
           </div>
         )}
 
         {tab === "chat" && (
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 flex flex-col gap-3 min-h-0 overflow-auto mb-3">
-              {agent.messages.length === 0 ? (
+              <DetailActivityFeed
+                activities={agent.activities ?? []}
+                streamingBuffer={agent.streamingBuffer}
+              />
+
+              {agent.messages.length === 0 &&
+              !(agent.streamingBuffer?.trim()) &&
+              (agent.activities?.length ?? 0) === 0 ? (
                 <div className="text-sm text-text-faint italic">
                   No messages yet.
                 </div>

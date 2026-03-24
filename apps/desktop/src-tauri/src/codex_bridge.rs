@@ -191,6 +191,9 @@ impl CodexBridge {
                 "name": "awencode_desktop",
                 "title": "Awencode Desktop",
                 "version": env!("CARGO_PKG_VERSION")
+            },
+            "capabilities": {
+                "experimentalApi": true
             }
         });
         self.request("initialize", params).await?;

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { LinearIssue } from "@/lib/linear";
 
 export type AgentStatus = "queued" | "active" | "review" | "deployed";
 
@@ -112,6 +113,8 @@ export interface Agent {
   sha?: string | null;
   /** GitHub PR status details fetched from the API. */
   prStatus?: PrStatus | null;
+  /** Explicit Linear issues linked to this thread. */
+  linkedLinearIssues?: LinearIssue[];
   /** Distinct models used by this thread over time. */
   modelsUsed?: string[];
 }
@@ -139,10 +142,13 @@ interface ThreadState {
   setAgentStatus: (agentId: string, status: AgentStatus) => void;
   updateAgentGitInfo: (agentId: string, info: { branch?: string; sha?: string; originUrl?: string }) => void;
   updateAgentPrStatus: (agentId: string, prStatus: PrStatus | null) => void;
+  setAgentLinkedLinearIssues: (agentId: string, issues: LinearIssue[]) => void;
+  upsertAgentLinkedLinearIssue: (agentId: string, issue: LinearIssue) => void;
   addAgentActivity: (agentId: string, activity: AgentActivity) => void;
   updateAgentActivity: (agentId: string, activityId: string, patch: Partial<AgentActivity>) => void;
   appendAgentThinkingDelta: (agentId: string, delta: string) => void;
   finalizeAgentThinking: (agentId: string) => void;
+  finalizeRunningAgentActivities: (agentId: string) => void;
   clearAgentActivities: (agentId: string) => void;
   setAgentPendingApproval: (agentId: string, approval: ApprovalRequest | null) => void;
   updateAgentTitle: (agentId: string, title: string) => void;
@@ -193,6 +199,7 @@ export const useThreadStore = create<ThreadState>((set) => ({
         {
           ...agent,
           activities: agent.activities ?? [],
+          linkedLinearIssues: agent.linkedLinearIssues ?? [],
           planSteps: agent.planSteps ?? [],
           modelsUsed: agent.modelsUsed ?? [],
         },
@@ -275,6 +282,27 @@ export const useThreadStore = create<ThreadState>((set) => ({
       ),
     })),
 
+  setAgentLinkedLinearIssues: (agentId, issues) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, linkedLinearIssues: issues } : a,
+      ),
+    })),
+
+  upsertAgentLinkedLinearIssue: (agentId, issue) =>
+    set((s) => ({
+      agents: s.agents.map((a) => {
+        if (a.id !== agentId) return a;
+        const existing = a.linkedLinearIssues ?? [];
+        const next = existing.some((x) => x.id === issue.id || x.identifier === issue.identifier)
+          ? existing.map((x) =>
+              x.id === issue.id || x.identifier === issue.identifier ? issue : x,
+            )
+          : [...existing, issue];
+        return { ...a, linkedLinearIssues: next };
+      }),
+    })),
+
   addAgentActivity: (agentId, activity) =>
     set((s) => ({
       agents: s.agents.map((a) =>
@@ -352,6 +380,29 @@ export const useThreadStore = create<ThreadState>((set) => ({
         return {
           ...a,
           activities: activities.map((x, i) => (i === idx ? finalized : x)),
+        };
+      }),
+    })),
+
+  finalizeRunningAgentActivities: (agentId) =>
+    set((s) => ({
+      agents: s.agents.map((a) => {
+        if (a.id !== agentId) return a;
+        const now = Date.now();
+        return {
+          ...a,
+          activities: (a.activities ?? []).map((act) => {
+            if (act.status !== "running") return act;
+            return {
+              ...act,
+              id:
+                act.id === STREAMING_THINKING_ACTIVITY_ID
+                  ? `thinking-${act.startedAt}`
+                  : act.id,
+              status: "done" as const,
+              durationMs: now - act.startedAt,
+            };
+          }),
         };
       }),
     })),

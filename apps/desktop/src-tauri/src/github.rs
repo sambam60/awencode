@@ -84,7 +84,9 @@ struct GitHubPullRequest {
     number: u64,
     html_url: String,
     mergeable: Option<bool>,
+    #[serde(default)]
     comments: u32,
+    #[serde(default)]
     review_comments: u32,
     head: GitHubPullRequestHead,
 }
@@ -107,7 +109,9 @@ struct GitHubReviewUser {
 
 #[derive(Debug, Deserialize)]
 struct GitHubCheckRunsResponse {
+    #[serde(default)]
     total_count: u32,
+    #[serde(default)]
     check_runs: Vec<GitHubCheckRun>,
 }
 
@@ -223,18 +227,23 @@ pub fn github_disconnect() -> Result<(), String> {
     clear_github_token()
 }
 
-pub async fn github_get_pr_status(path: String) -> Result<Option<GitHubPrStatus>, String> {
+pub async fn github_get_pr_status(
+    path: String,
+    branch: Option<String>,
+) -> Result<Option<GitHubPrStatus>, String> {
     let Some(token) = load_github_token()? else {
-        return Ok(None);
+        return Err("No GitHub token found. Connect GitHub in Settings.".to_string());
     };
     let repo_context = resolve_repo_context(Path::new(&path))?;
     let Some((owner, repo)) = parse_github_repo(&repo_context.origin_url) else {
-        return Ok(None);
+        return Err("Could not parse a GitHub repository from the git remote URL.".to_string());
     };
+    let effective_branch = branch
+        .filter(|b| !b.trim().is_empty())
+        .unwrap_or(repo_context.branch);
     let client = github_http_client()?;
     let pulls_url = format!(
-        "{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?head={owner}:{}&state=open&per_page=1",
-        repo_context.branch
+        "{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?head={owner}:{effective_branch}&state=open&per_page=1",
     );
     let pulls: Vec<GitHubPullRequest> = github_get_json(&client, &token, &pulls_url).await?;
     let Some(pr) = pulls.into_iter().next() else {
@@ -302,6 +311,7 @@ async fn github_get_json<T: for<'de> Deserialize<'de>>(
 ) -> Result<T, String> {
     let response = client
         .get(url)
+        .header(ACCEPT, "application/vnd.github+json")
         .header(AUTHORIZATION, format!("Bearer {token}"))
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
@@ -318,10 +328,14 @@ async fn github_get_json<T: for<'de> Deserialize<'de>>(
             .unwrap_or_else(|_| "GitHub request failed".to_string());
         return Err(format!("GitHub request failed: {message}"));
     }
-    response
-        .json::<T>()
+    let body = response
+        .text()
         .await
-        .map_err(|err| format!("Failed to parse GitHub response: {err}"))
+        .map_err(|err| format!("Failed to read GitHub response body: {err}"))?;
+    serde_json::from_str::<T>(&body).map_err(|err| {
+        let snippet: String = body.chars().take(300).collect();
+        format!("Failed to parse GitHub response: {err}\nBody preview: {snippet}")
+    })
 }
 
 fn github_http_client() -> Result<reqwest::Client, String> {

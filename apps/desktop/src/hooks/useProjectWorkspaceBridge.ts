@@ -29,6 +29,7 @@ function hydrateAgentFromDisk(a: Agent): Agent {
   return {
     ...sanitizeAgentForDisk(a),
     activities: a.activities ?? [],
+    linkedLinearIssues: a.linkedLinearIssues ?? [],
     planSteps: a.planSteps ?? [],
     messages: a.messages ?? [],
     files: a.files ?? [],

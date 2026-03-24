@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { formatCompactCount, parseUnifiedDiff } from "@/lib/agent-metrics";
+import { handleLinearDynamicToolCall } from "@/lib/linear-thread-tools";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import type {
@@ -51,6 +52,23 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function dynamicToolDetail(item: Record<string, unknown>): { detail?: string; status: "done" | "error" } {
+  const status = item.status === "failed" ? "error" : "done";
+  const error = typeof item.error === "string" ? item.error.trim() : "";
+  const contentItems = Array.isArray(item.contentItems) ? item.contentItems : [];
+  const text = contentItems
+    .map((entry) => {
+      const obj = entry as Record<string, unknown>;
+      return obj.type === "inputText" && typeof obj.text === "string" ? obj.text.trim() : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  return {
+    status,
+    detail: error || text || undefined,
+  };
+}
+
 const SHELL_CMD_MAX = 8_000;
 const SHELL_OUTPUT_MAX = 150_000;
 
@@ -94,6 +112,10 @@ function activityFromItem(item: Record<string, unknown>): { kind: ActivityKind; 
     const tool = typeof item.tool === "string" ? item.tool : "mcp";
     return { kind: "tool", label: tool, detail: undefined };
   }
+  if (type === "dynamicToolCall") {
+    const tool = typeof item.tool === "string" ? item.tool : "tool";
+    return { kind: "tool", label: tool, detail: undefined };
+  }
   if (type === "reasoning") {
     return null;
   }
@@ -114,6 +136,7 @@ export function useCodexNotifications() {
   const appendAgentThinkingDelta = useThreadStore((s) => s.appendAgentThinkingDelta);
   const finalizeAgentThinking = useThreadStore((s) => s.finalizeAgentThinking);
   const clearAgentActivities = useThreadStore((s) => s.clearAgentActivities);
+  const finalizeRunningAgentActivities = useThreadStore((s) => s.finalizeRunningAgentActivities);
   const setAgentPendingApproval = useThreadStore((s) => s.setAgentPendingApproval);
   const updateAgentTitle = useThreadStore((s) => s.updateAgentTitle);
   const setAgentPlan = useThreadStore((s) => s.setAgentPlan);
@@ -249,6 +272,7 @@ export function useCodexNotifications() {
             lastTurnDurationMs: startedAt != null ? Date.now() - startedAt : null,
           });
           finalizeAgentThinking(agentId);
+          finalizeRunningAgentActivities(agentId);
           flushAgentStreamingBuffer(agentId);
           setAgentTurnInProgress(agentId, false);
           setAgentCurrentTurnId(agentId, null);
@@ -284,9 +308,12 @@ export function useCodexNotifications() {
           if (itemId) {
             const agent = useThreadStore.getState().agents.find((a) => a.id === agentId);
             const act = agent?.activities?.find((a) => a.id === itemId);
+            const dynamicTool =
+              item.type === "dynamicToolCall" ? dynamicToolDetail(item) : null;
             updateAgentActivity(agentId, itemId, {
-              status: "done",
+              status: dynamicTool?.status ?? "done",
               durationMs: act ? Date.now() - act.startedAt : undefined,
+              ...(dynamicTool?.detail !== undefined ? { detail: dynamicTool.detail } : {}),
             });
           }
           break;
@@ -326,6 +353,14 @@ export function useCodexNotifications() {
               });
             }
           }
+          break;
+        }
+
+        case "item/tool/call": {
+          if (rpcId == null) break;
+          const tool = typeof params.tool === "string" ? params.tool : "";
+          if (!tool) break;
+          void handleLinearDynamicToolCall(agentId, rpcId, tool, params.arguments);
           break;
         }
 
@@ -397,6 +432,7 @@ export function useCodexNotifications() {
             });
             flushAgentStreamingBuffer(agentId);
             finalizeAgentThinking(agentId);
+            finalizeRunningAgentActivities(agentId);
             setAgentTurnInProgress(agentId, false);
             setAgentCurrentTurnId(agentId, null);
             setAgentStatus(agentId, "review");

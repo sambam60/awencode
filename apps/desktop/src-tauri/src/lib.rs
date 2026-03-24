@@ -8,6 +8,7 @@ mod secrets;
 use base64::Engine;
 use codex_bridge::CodexBridge;
 use secrets::{load_api_key_statuses, load_api_keys, persist_api_key_updates};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
@@ -213,8 +214,11 @@ fn github_disconnect() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn github_get_pr_status(path: String) -> Result<Option<github::GitHubPrStatus>, String> {
-    github::github_get_pr_status(path).await
+async fn github_get_pr_status(
+    path: String,
+    branch: Option<String>,
+) -> Result<Option<github::GitHubPrStatus>, String> {
+    github::github_get_pr_status(path, branch).await
 }
 
 #[tauri::command]
@@ -235,6 +239,16 @@ async fn linear_get_user() -> Result<Option<linear::LinearUser>, String> {
 }
 
 #[tauri::command]
+async fn linear_get_teams() -> Result<Vec<linear::LinearTeam>, String> {
+    linear::linear_get_teams().await
+}
+
+#[tauri::command]
+async fn linear_get_workflow_states() -> Result<Vec<linear::LinearWorkflowStateSummary>, String> {
+    linear::linear_get_workflow_states().await
+}
+
+#[tauri::command]
 fn linear_disconnect() -> Result<(), String> {
     linear::linear_disconnect()
 }
@@ -248,9 +262,23 @@ async fn linear_get_assigned_issues() -> Result<Vec<linear::LinearIssue>, String
 async fn linear_create_issue(
     title: String,
     description: Option<String>,
-    team_id: Option<String>,
+    team: Option<String>,
 ) -> Result<linear::LinearIssue, String> {
-    linear::linear_create_issue(title, description, team_id).await
+    linear::linear_create_issue(title, description, team).await
+}
+
+#[tauri::command]
+async fn linear_get_issue(issue_id: String) -> Result<linear::LinearIssue, String> {
+    linear::linear_get_issue(issue_id).await
+}
+
+#[tauri::command]
+async fn linear_update_issue_state(
+    issue_id: String,
+    awencode_status: String,
+    preferred_state_name: Option<String>,
+) -> Result<linear::LinearIssue, String> {
+    linear::linear_update_issue_state(issue_id, awencode_status, preferred_state_name).await
 }
 
 #[tauri::command]
@@ -280,25 +308,6 @@ fn truncate_prompt_context(text: &str, max_chars: usize) -> String {
         "{}\n...[truncated]",
         text.chars().take(max_chars).collect::<String>()
     )
-}
-
-async fn git_add_all(path: &Path) -> Result<(), String> {
-    let path = path.to_path_buf();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(&path)
-            .output()
-    })
-    .await
-    .map_err(|err| err.to_string())?
-    .map_err(|err| err.to_string())?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(command_stderr(&output.stderr, "git add failed"))
-    }
 }
 
 async fn read_staged_diff_context(path: &Path) -> Result<String, String> {
@@ -718,39 +727,160 @@ async fn get_git_info(path: String) -> Result<GitInfoResult, String> {
     })
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitPrInfo {
-    number: String,
+    number: u64,
     url: String,
 }
 
-/// Look up the open PR for the current branch via `gh pr view`.
+#[derive(Clone)]
+struct ParsedGitStatusEntry {
+    path: String,
+    status: String,
+    index_status: char,
+}
+
+struct ParsedGitStatus {
+    current_branch: Option<String>,
+    has_upstream: bool,
+    branch_ahead: bool,
+    entries: Vec<ParsedGitStatusEntry>,
+}
+
+fn normalize_git_status_path(raw_path: &str) -> String {
+    raw_path
+        .rsplit_once(" -> ")
+        .map(|(_, path)| path)
+        .unwrap_or(raw_path)
+        .trim()
+        .to_string()
+}
+
+fn summarize_git_status(index_status: char, worktree_status: char) -> String {
+    let xy = format!("{index_status}{worktree_status}");
+    match xy.trim() {
+        "M" | "MM" | "AM" => "M",
+        "A" => "A",
+        "D" => "D",
+        "R" => "R",
+        "C" => "C",
+        "??" => "U",
+        "!" | "!!" => "!",
+        s if s.starts_with('M') => "M",
+        s if s.starts_with('A') => "A",
+        s if s.starts_with('D') => "D",
+        s if s.starts_with('R') => "R",
+        _ => "M",
+    }
+    .to_string()
+}
+
+fn parse_git_status_branch_header(line: &str) -> (Option<String>, bool, bool) {
+    let header = line.strip_prefix("## ").unwrap_or(line).trim();
+    if let Some(branch) = header.strip_prefix("No commits yet on ") {
+        return (Some(branch.trim().to_string()), false, false);
+    }
+    let (branch_part, tracking_part) = match header.split_once("...") {
+        Some((branch, tracking)) => (branch.trim(), Some(tracking)),
+        None => (header, None),
+    };
+    let current_branch = match branch_part.split_whitespace().next().unwrap_or("") {
+        "" | "HEAD" => None,
+        branch => Some(branch.to_string()),
+    };
+    let has_upstream = tracking_part.is_some();
+    let branch_ahead = tracking_part.is_some_and(|tracking| tracking.contains("ahead "));
+    (current_branch, has_upstream, branch_ahead)
+}
+
+fn is_staged_git_status(status: char) -> bool {
+    !matches!(status, ' ' | '?' | '!')
+}
+
+async fn read_git_status(path: &Path) -> Result<ParsedGitStatus, String> {
+    let path = path.to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["status", "--porcelain=v1", "-uall", "--branch"])
+            .current_dir(&path)
+            .output()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(command_stderr(&output.stderr, "git status failed"));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut current_branch = None;
+    let mut has_upstream = false;
+    let mut branch_ahead = false;
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        if line.starts_with("## ") {
+            let parsed = parse_git_status_branch_header(line);
+            current_branch = parsed.0;
+            has_upstream = parsed.1;
+            branch_ahead = parsed.2;
+            continue;
+        }
+        if line.len() < 4 {
+            continue;
+        }
+        let mut xy = line[..2].chars();
+        let index_status = xy.next().unwrap_or(' ');
+        let worktree_status = xy.next().unwrap_or(' ');
+        entries.push(ParsedGitStatusEntry {
+            path: normalize_git_status_path(&line[3..]),
+            status: summarize_git_status(index_status, worktree_status),
+            index_status,
+        });
+    }
+    Ok(ParsedGitStatus {
+        current_branch,
+        has_upstream,
+        branch_ahead,
+        entries,
+    })
+}
+
+/// Look up the open PR for a branch via `gh pr list`.
 /// Returns `null` (Ok(None)) when there is no PR or `gh` is unavailable.
 #[tauri::command]
-async fn get_branch_pr(path: String) -> Result<Option<GitPrInfo>, String> {
+async fn get_branch_pr(path: String, branch: Option<String>) -> Result<Option<GitPrInfo>, String> {
     let path = std::path::PathBuf::from(path);
     if !path.is_dir() {
         return Err("Not a directory".to_string());
     }
     tokio::task::spawn_blocking(move || {
-        let output = std::process::Command::new("gh")
-            .args(["pr", "view", "--json", "number,url", "--jq", ".number,.url"])
-            .current_dir(&path)
-            .output()
-            .ok();
+        let mut command = std::process::Command::new("gh");
+        command
+            .args([
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--json",
+                "number,url",
+                "--limit",
+                "1",
+            ])
+            .current_dir(&path);
+        if let Some(branch) = branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            command.args(["--head", branch]);
+        }
+        let output = command.output().ok();
         let output = match output {
             Some(o) if o.status.success() => o,
             _ => return Ok(None),
         };
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut lines = text.trim().lines();
-        let number = lines.next().unwrap_or("").trim().to_string();
-        let url = lines.next().unwrap_or("").trim().to_string();
-        if number.is_empty() || url.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(GitPrInfo { number, url }))
+        let prs = serde_json::from_slice::<Vec<GitPrInfo>>(&output.stdout).ok();
+        Ok(prs.and_then(|items| items.into_iter().next()))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -769,46 +899,68 @@ async fn get_git_file_status(path: String) -> Result<Vec<FileStatusEntry>, Strin
     if !path.is_dir() {
         return Err("Not a directory".to_string());
     }
-    tokio::task::spawn_blocking(move || {
-        let output = std::process::Command::new("git")
-            .args(["status", "--porcelain=v1", "-uall"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err("git status failed".to_string());
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut entries = Vec::new();
-        for line in stdout.lines() {
-            if line.len() < 4 {
-                continue;
-            }
-            let xy = &line[..2];
-            let file_path = line[3..].to_string();
-            let status = match xy.trim() {
-                "M" | "MM" | "AM" => "M",
-                "A" => "A",
-                "D" => "D",
-                "R" => "R",
-                "C" => "C",
-                "??" => "U",
-                "!" | "!!" => "!",
-                s if s.starts_with('M') => "M",
-                s if s.starts_with('A') => "A",
-                s if s.starts_with('D') => "D",
-                s if s.starts_with('R') => "R",
-                _ => "M",
-            };
-            entries.push(FileStatusEntry {
-                path: file_path,
-                status: status.to_string(),
-            });
-        }
-        Ok(entries)
+    let status = read_git_status(&path).await?;
+    Ok(status
+        .entries
+        .into_iter()
+        .map(|entry| FileStatusEntry {
+            path: entry.path,
+            status: entry.status,
+        })
+        .collect())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitThreadActionState {
+    current_branch: Option<String>,
+    branch_matches_thread: bool,
+    has_thread_staged_changes: bool,
+    has_upstream: bool,
+    branch_ahead: bool,
+    can_commit: bool,
+    can_push: bool,
+}
+
+#[tauri::command]
+async fn get_git_thread_action_state(
+    path: String,
+    branch: Option<String>,
+    files: Vec<String>,
+) -> Result<GitThreadActionState, String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    let status = read_git_status(&path).await?;
+    let thread_branch = branch.unwrap_or_default();
+    let thread_branch = thread_branch.trim();
+    let branch_matches_thread = !thread_branch.is_empty()
+        && status
+            .current_branch
+            .as_deref()
+            .is_some_and(|current_branch| current_branch == thread_branch);
+    let thread_files: HashSet<String> = files
+        .into_iter()
+        .map(|file| file.trim().to_string())
+        .filter(|file| !file.is_empty())
+        .collect();
+    let has_thread_staged_changes = !thread_files.is_empty()
+        && status.entries.iter().any(|entry| {
+            is_staged_git_status(entry.index_status) && thread_files.contains(entry.path.as_str())
+        });
+    let can_commit = branch_matches_thread && has_thread_staged_changes;
+    let can_push = branch_matches_thread
+        && (has_thread_staged_changes || status.branch_ahead || !status.has_upstream);
+    Ok(GitThreadActionState {
+        current_branch: status.current_branch,
+        branch_matches_thread,
+        has_thread_staged_changes,
+        has_upstream: status.has_upstream,
+        branch_ahead: status.branch_ahead,
+        can_commit,
+        can_push,
     })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -894,7 +1046,6 @@ async fn git_commit(path: String, message: String) -> Result<(), String> {
         return Err("Not a directory".to_string());
     }
 
-    git_add_all(&path).await?;
     let message = resolve_commit_message(&path, &message).await?;
 
     let path_commit = path.clone();
@@ -1106,9 +1257,13 @@ pub fn run() {
             linear_oauth_start,
             linear_oauth_status,
             linear_get_user,
+            linear_get_teams,
+            linear_get_workflow_states,
             linear_disconnect,
             linear_get_assigned_issues,
             linear_create_issue,
+            linear_get_issue,
+            linear_update_issue_state,
             generate_thread_title,
             git_clone,
             git_create_branch,
@@ -1119,6 +1274,7 @@ pub fn run() {
             get_git_info,
             get_branch_pr,
             get_git_file_status,
+            get_git_thread_action_state,
             path_is_directory,
             list_directory_tree,
             sync_window_theme,

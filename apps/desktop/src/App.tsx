@@ -2,6 +2,7 @@ import { useAppStore } from "./lib/stores/app-store";
 import { useViewStore } from "./lib/stores/view-store";
 import { useThreadStore } from "./lib/stores/thread-store";
 import { useCodexNotifications } from "./hooks/useCodexNotifications";
+import { useLinearIssueStatusSync } from "./hooks/useLinearIssueStatusSync";
 import { Orchestrator } from "./components/orchestrator/Board";
 import { ChatView } from "./components/chat/ChatView";
 import { SettingsView } from "./components/settings/SettingsView";
@@ -53,6 +54,7 @@ function ThemeClassRoot({ children }: { children: React.ReactNode }) {
 export default function App() {
   useProjectWorkspaceBridge();
   useCodexNotifications();
+  useLinearIssueStatusSync();
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const agents = useThreadStore((s) => s.agents);

@@ -1046,8 +1046,9 @@ function GitButton({
   useEffect(() => {
     if (!projectPath) return;
     let cancelled = false;
-    invoke<{ number: string; url: string } | null>("get_branch_pr", {
+    invoke<{ number: number; url: string } | null>("get_branch_pr", {
       path: projectPath,
+      branch: branch || null,
     })
       .then((result) => {
         if (cancelled) return;
@@ -1118,10 +1119,9 @@ function GitButton({
           url: `https://github.com/${repo}/pull/${encodeURIComponent(prNum)}`,
         });
       } else {
-        const b = info?.branch;
-        if (b) {
+        if (branch) {
           await invoke("open_url", {
-            url: `https://github.com/${repo}/compare/${encodeURIComponent(b)}?expand=1`,
+            url: `https://github.com/${repo}/compare/${encodeURIComponent(branch)}?expand=1`,
           });
         }
       }
@@ -1555,7 +1555,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       .then((info) => {
         if (!info?.branch && !info?.sha && !info?.originUrl) return;
         updateAgentGitInfo(agent.id, {
-          branch: info.branch ?? undefined,
+          ...(!agent.branch.trim() && info.branch ? { branch: info.branch } : {}),
           sha: info.sha ?? undefined,
           originUrl: info.originUrl ?? undefined,
         });
@@ -1563,7 +1563,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         return rpcRequest("thread/metadata/update", {
           threadId: agent.codexThreadId,
           gitInfo: {
-            branch: info.branch ?? undefined,
+            branch: agent.branch || info.branch || undefined,
             sha: info.sha ?? undefined,
             originUrl: info.originUrl ?? undefined,
           },
@@ -1581,7 +1581,10 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       mergeable: boolean;
       prNumber: number | null;
       prUrl: string | null;
-    } | null>("github_get_pr_status", { path: projectPath })
+    } | null>("github_get_pr_status", {
+      path: projectPath,
+      branch: agent.branch || null,
+    })
       .then((prStatus) => {
         updateAgentPrStatus(agent.id, prStatus);
       })
@@ -1608,12 +1611,25 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   useEffect(() => {
     const wasBusy = prevTurnInProgressRef.current;
     prevTurnInProgressRef.current = agent.turnInProgress;
-    if (wasBusy && !agent.turnInProgress) {
-      const next = useChatUiStore.getState().dequeueMessage(agent.id);
-      if (next) {
-        sendChatTurn(agent.id, next.text, []);
-      }
+    if (!wasBusy || agent.turnInProgress) {
+      return;
     }
+
+    const next = useChatUiStore.getState().dequeueMessage(agent.id);
+    if (!next) {
+      return;
+    }
+
+    let cancelled = false;
+    void sendChatTurn(agent.id, next.text, []).catch((error) => {
+      if (!cancelled) {
+        console.error("Failed to send dequeued message", error);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [agent.turnInProgress, agent.id]);
 
   const [stopping, setStopping] = useState(false);
@@ -1700,12 +1716,14 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       await interruptTurn(tid, turnId);
       const {
         finalizeAgentThinking,
+        finalizeRunningAgentActivities,
         flushAgentStreamingBuffer,
         setAgentTurnInProgress,
         setAgentStatus,
         setAgentCurrentTurnId,
       } = useThreadStore.getState();
       finalizeAgentThinking(agent.id);
+      finalizeRunningAgentActivities(agent.id);
       flushAgentStreamingBuffer(agent.id);
       setAgentTurnInProgress(agent.id, false);
       setAgentCurrentTurnId(agent.id, null);

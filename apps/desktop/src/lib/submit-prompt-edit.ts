@@ -1,9 +1,19 @@
 import type { Attachment } from "@/components/chat/ComposeArea";
+import { buildLinearDynamicTools } from "@/lib/linear-thread-tools";
 import { rpcRequest } from "@/lib/rpc-client";
 import { sendChatTurn } from "@/lib/send-chat-turn";
 import { useAppStore } from "@/lib/stores/app-store";
-import { getSelectedModel } from "@/lib/stores/settings-store";
+import { getSelectedModel, useSettingsStore } from "@/lib/stores/settings-store";
 import { useThreadStore, type AgentMessage } from "@/lib/stores/thread-store";
+
+const LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION =
+  "When Linear auto-sync is enabled, do not directly change the status of linked Linear issues. Change the Awencode thread status instead, and let Awencode sync linked Linear issues automatically.";
+
+function linearAutoSyncDeveloperInstruction(): string | null {
+  return useSettingsStore.getState().linearAutoSyncEnabled
+    ? LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION
+    : null;
+}
 
 function countUserMessagesFrom(messages: AgentMessage[], fromIndex: number): number {
   return messages.slice(fromIndex).filter((m) => m.role === "you").length;
@@ -44,6 +54,8 @@ export async function submitPromptEditRevert(
             cwd: projectPath ?? undefined,
             model: getSelectedModel().id,
             modelProvider: getSelectedModel().provider,
+            developerInstructions: linearAutoSyncDeveloperInstruction(),
+            dynamicTools: buildLinearDynamicTools(),
           });
           await rpcRequest("thread/rollback", { threadId, numTurns });
         } catch (resumeErr) {

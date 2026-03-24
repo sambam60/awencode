@@ -26,6 +26,7 @@ import {
   Moon,
   Palette,
   Plug,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   Sun,
@@ -41,14 +42,18 @@ import {
   readOpenAiAccount,
   type OpenAiAccountState,
 } from "@/lib/openai-auth";
+import { type LinearConnectedUser, type LinearWorkflowStateSummary } from "@/lib/linear";
 import {
   CURATED_MODELS,
   buildAzureDeploymentModels as buildAzureModels,
   isGptFamilyModelId,
   useSettingsStore,
+  type LinearSyncStatusKey,
   type ModelProviderId,
 } from "@/lib/stores/settings-store";
 import { invoke } from "@tauri-apps/api/core";
+import { buildLinearDynamicTools } from "@/lib/linear-thread-tools";
+import { STATUS_CONFIG } from "@/lib/status";
 import { searchMcpRegistry, mcpServerTomlKey, type RegistryServer } from "@/lib/mcp-registry";
 type NavIcon = ComponentType<LucideProps>;
 
@@ -470,12 +475,6 @@ type GitHubDeviceFlowPollResult =
   | { status: "complete"; user: GitHubConnectedUser }
   | { status: "error"; message: string };
 
-type LinearConnectedUser = {
-  id: string;
-  name: string;
-  email?: string | null;
-};
-
 type LinearOauthStartResult = {
   requestId: string;
   authUrl: string;
@@ -485,6 +484,84 @@ type LinearOauthStatusResult =
   | { status: "pending"; message?: string | null }
   | { status: "complete"; user: LinearConnectedUser }
   | { status: "error"; message: string };
+
+const LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION =
+  "When Linear auto-sync is enabled, do not directly change the status of linked Linear issues. Change the Awencode thread status instead, and let Awencode sync linked Linear issues automatically.";
+const LINEAR_MAPPING_AUTOMATIC = "__automatic__";
+const LINEAR_SYNC_STATUS_ROWS: Array<{
+  key: LinearSyncStatusKey;
+  label: string;
+  description: string;
+}> = [
+  { key: "queued", label: "Drafts", description: "Used when a thread is queued or still a draft." },
+  { key: "active", label: "Running", description: "Used while a thread is actively working." },
+  { key: "review", label: "Review", description: "Used after a turn completes and the work is ready for review." },
+  { key: "deployed", label: "Done", description: "Used when work is finished or shipped." },
+];
+
+function LinearStatusLabel({ status }: { status: LinearSyncStatusKey }) {
+  const config = STATUS_CONFIG[status];
+  const Icon = config.icon;
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <Icon
+        className="h-3.5 w-3.5 shrink-0"
+        strokeWidth={1.9}
+        style={{ color: config.color }}
+      />
+      <span>{config.label}</span>
+    </div>
+  );
+}
+
+function buildLinearWorkflowOptions(states: LinearWorkflowStateSummary[]) {
+  const byName = new Map<
+    string,
+    { name: string; teams: Set<string>; stateTypes: Set<string> }
+  >();
+  for (const state of states) {
+    const key = state.name.trim().toLowerCase();
+    if (!key) continue;
+    const existing =
+      byName.get(key) ??
+      (() => {
+        const next = { name: state.name.trim(), teams: new Set<string>(), stateTypes: new Set<string>() };
+        byName.set(key, next);
+        return next;
+      })();
+    existing.teams.add(state.teamName);
+    if (state.stateType) {
+      existing.stateTypes.add(state.stateType);
+    }
+  }
+
+  return [
+    {
+      value: LINEAR_MAPPING_AUTOMATIC,
+      label: "Automatic",
+      description: "Use Awencode's built-in mapping for this status.",
+    },
+    ...Array.from(byName.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => ({
+        value: entry.name,
+        label: entry.name,
+        description: [
+          entry.stateTypes.size === 1 ? Array.from(entry.stateTypes)[0] : null,
+          entry.teams.size > 0 ? `Available in ${Array.from(entry.teams).join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+  ];
+}
+
+function linearAutoSyncDeveloperInstruction(): string | null {
+  return useSettingsStore.getState().linearAutoSyncEnabled
+    ? LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION
+    : null;
+}
 
 function IntegrationCard({
   title,
@@ -573,6 +650,40 @@ function IntegrationActionButton({
     >
       {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
       <span>{label}</span>
+    </button>
+  );
+}
+
+function SettingsToggle({
+  checked,
+  onChange,
+  disabled = false,
+  label,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors duration-150 shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-default",
+        checked ? "bg-[var(--toggle-on)] border-[var(--toggle-on)]" : "bg-bg-secondary border-border",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block h-4 w-4 rounded-full bg-[var(--toggle-knob)] shadow-sm transition-transform duration-150",
+          checked ? "translate-x-[17px]" : "translate-x-[1px]",
+        )}
+      />
     </button>
   );
 }
@@ -1133,6 +1244,10 @@ function GeneralSection({
 }
 
 function IntegrationsSection() {
+  const linearAutoSyncEnabled = useSettingsStore((s) => s.linearAutoSyncEnabled);
+  const linearStatusMappings = useSettingsStore((s) => s.linearStatusMappings);
+  const setLinearAutoSyncEnabled = useSettingsStore((s) => s.setLinearAutoSyncEnabled);
+  const setLinearStatusMapping = useSettingsStore((s) => s.setLinearStatusMapping);
   const [openAiAccountState, setOpenAiAccountState] = useState<OpenAiAccountState>(
     EMPTY_OPENAI_ACCOUNT_STATE,
   );
@@ -1149,6 +1264,9 @@ function IntegrationsSection() {
   const [linearStatus, setLinearStatus] = useState<string | null>(null);
   const [linearBusy, setLinearBusy] = useState<"idle" | "starting" | "disconnecting">("idle");
   const [linearRequestId, setLinearRequestId] = useState<string | null>(null);
+  const [linearWorkflowStates, setLinearWorkflowStates] = useState<LinearWorkflowStateSummary[]>([]);
+  const [linearWorkflowStatus, setLinearWorkflowStatus] = useState<string | null>(null);
+  const [linearWorkflowBusy, setLinearWorkflowBusy] = useState(false);
 
   const refreshOpenAiAccount = useCallback(async () => {
     const nextAccount = await readOpenAiAccount(false);
@@ -1165,6 +1283,12 @@ function IntegrationsSection() {
     setLinearUser(nextUser);
   }, []);
 
+  const refreshLinearWorkflowStates = useCallback(async () => {
+    const states = await invoke<LinearWorkflowStateSummary[]>("linear_get_workflow_states");
+    setLinearWorkflowStates(states);
+    setLinearWorkflowStatus(null);
+  }, []);
+
   useEffect(() => {
     refreshOpenAiAccount().catch((error) => {
       console.error("account/read failed", error);
@@ -1176,6 +1300,33 @@ function IntegrationsSection() {
       console.error("linear_get_user failed", error);
     });
   }, [refreshGithubUser, refreshLinearUser, refreshOpenAiAccount]);
+
+  useEffect(() => {
+    if (!linearUser) {
+      setLinearWorkflowStates([]);
+      setLinearWorkflowStatus(null);
+      setLinearWorkflowBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setLinearWorkflowBusy(true);
+    refreshLinearWorkflowStates()
+      .catch((error) => {
+        if (cancelled) return;
+        setLinearWorkflowStatus(
+          error instanceof Error ? error.message : "Could not load Linear workflow states.",
+        );
+        setLinearWorkflowStates([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLinearWorkflowBusy(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [linearUser, refreshLinearWorkflowStates]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1432,6 +1583,8 @@ function IntegrationsSection() {
       await invoke("linear_disconnect");
       setLinearRequestId(null);
       setLinearUser(null);
+      setLinearWorkflowStates([]);
+      setLinearWorkflowStatus(null);
       setLinearStatus("Disconnected.");
     } catch (error) {
       setLinearStatus(
@@ -1449,6 +1602,7 @@ function IntegrationsSection() {
           .filter(Boolean)
           .join(" · ") || "Connected with ChatGPT."
       : "Not connected.";
+  const linearWorkflowOptions = buildLinearWorkflowOptions(linearWorkflowStates);
 
   return (
     <div>
@@ -1460,7 +1614,7 @@ function IntegrationsSection() {
       <div className="grid gap-4">
         <IntegrationCard
           title="GitHub"
-          description="Use GitHub OAuth for pull request checks, approvals, comments, and merge status."
+          description="Sign in with GitHub to show pull requests with live checks, review state, and merge readiness in the app."
           icon={<IntegrationBrandIcon src="/octicon.svg" alt="GitHub" />}
         >
           <div className="flex items-start justify-between gap-4">
@@ -1469,7 +1623,8 @@ function IntegrationsSection() {
                 {githubUser ? `@${githubUser.login}` : "Not connected"}
               </div>
               <div className="mt-0.5 text-[11px] text-text-tertiary leading-relaxed">
-                {githubUser?.name ?? "Required for private-repo PR metadata and status checks."}
+                {githubUser?.name ??
+                  "Needed to read repository and pull request data, including private repos you can access."}
               </div>
             </div>
             {githubUser ? (
@@ -1533,16 +1688,17 @@ function IntegrationsSection() {
           ) : null}
 
           <div className="mt-3 text-[11px] text-text-tertiary leading-relaxed">
-            {githubStatus ?? "Connect GitHub to replace placeholder PR metadata with real checks and review data."}
+            {githubStatus ??
+              "Connect when you want accurate PR details, CI results, and review activity without leaving Awencode."}
           </div>
         </IntegrationCard>
 
         <IntegrationCard
           title="Linear"
-          description="Use Linear OAuth to link threads to issues and prepare Linear issue workflows."
+          description="Use Linear OAuth to link threads to issues, auto-sync linked work, and control how Awencode statuses map onto Linear workflow states."
           icon={
             <IntegrationBrandIcon
-              src="/linear_wordmark.svg"
+              src="/linear_icon.svg"
               alt="Linear"
               invertMode="light"
               cropWordmark
@@ -1577,8 +1733,68 @@ function IntegrationsSection() {
           </div>
 
           <div className="mt-3 text-[11px] text-text-tertiary leading-relaxed">
-            {linearStatus ?? "Complete the browser flow to make Linear issue linking available."}
+            {linearStatus ??
+              "Connect Linear to enable thread-specific issue links and status sync for linked work."}
           </div>
+
+          {linearUser ? (
+            <div className="mt-4 rounded-lg border border-border-light bg-bg-secondary/35 overflow-hidden">
+              <SettingsRow
+                label="Auto-sync linked issues"
+                description="When enabled, linked Linear issues update automatically as a thread moves between Awencode states."
+                icon={<RefreshCw className="h-4 w-4" strokeWidth={1.6} />}
+              >
+                <SettingsToggle
+                  checked={linearAutoSyncEnabled}
+                  onChange={setLinearAutoSyncEnabled}
+                  label="Toggle automatic Linear status sync"
+                />
+              </SettingsRow>
+
+              <SettingsRow
+                layout="stacked"
+                label="Status mapping"
+                description="Map Awencode thread states to exact Linear workflow states. Leave any row on Automatic to use Awencode's built-in heuristic."
+                icon={<Layers className="h-4 w-4" strokeWidth={1.6} />}
+              >
+                <div className="grid gap-3">
+                  {LINEAR_SYNC_STATUS_ROWS.map((row) => (
+                    <div
+                      key={row.key}
+                      className="grid gap-2 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-start"
+                    >
+                      <div className="pt-1">
+                        <div className="text-[12px] font-medium text-text-primary">
+                          <LinearStatusLabel status={row.key} />
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-text-tertiary leading-relaxed">
+                          {row.description}
+                        </div>
+                      </div>
+                      <SettingsChoiceField
+                        value={linearStatusMappings[row.key] ?? LINEAR_MAPPING_AUTOMATIC}
+                        options={linearWorkflowOptions}
+                        onChange={(value) =>
+                          setLinearStatusMapping(
+                            row.key,
+                            value === LINEAR_MAPPING_AUTOMATIC ? null : value,
+                          )
+                        }
+                        disabled={linearWorkflowBusy}
+                      />
+                    </div>
+                  ))}
+
+                  <div className="text-[11px] text-text-tertiary leading-relaxed">
+                    {linearWorkflowBusy
+                      ? "Loading Linear workflow states…"
+                      : linearWorkflowStatus ??
+                        "Mappings use exact Linear state names. If a mapping is Automatic, Awencode falls back to its built-in status matching."}
+                  </div>
+                </div>
+              </SettingsRow>
+            </div>
+          ) : null}
         </IntegrationCard>
 
         <IntegrationCard
@@ -2953,6 +3169,8 @@ function ArchivedThreadsSection() {
       }>("thread/resume", {
         threadId: t.id,
         persistExtendedHistory: false,
+        developerInstructions: linearAutoSyncDeveloperInstruction(),
+        dynamicTools: buildLinearDynamicTools(),
       });
       const thread = resumed?.thread;
       if (!thread?.id) {
