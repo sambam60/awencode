@@ -402,19 +402,21 @@ export async function sendChatTurn(
     try {
       await startTurn();
     } catch (e) {
-      console.error("turn/start failed", e);
+      let currentError: unknown = e;
+      console.error("turn/start failed", currentError);
 
-      if (await resumeThreadIfNeeded(e)) {
+      if (await resumeThreadIfNeeded(currentError)) {
         try {
           await startTurn();
           return;
         } catch (retryAfterResume) {
           console.error("turn/start failed after auto-resume", retryAfterResume);
+          currentError = retryAfterResume;
         }
       }
 
-      if (!(await tryOpenAiFallback(e))) {
-        if (await tryProviderCredentialRefresh(e)) {
+      if (!(await tryOpenAiFallback(currentError))) {
+        if (await tryProviderCredentialRefresh(currentError)) {
           try {
             await startTurn();
             return;
@@ -429,7 +431,7 @@ export async function sendChatTurn(
         }
         appendLocalAgentError(
           agentId,
-          `Couldn't start the turn with ${providerLabel(getSelectedModel().provider)}: ${extractErrorMessage(e)}`,
+          `Couldn't start the turn with ${providerLabel(getSelectedModel().provider)}: ${extractErrorMessage(currentError)}`,
         );
         setAgentStatus(agentId, "review");
         return;
