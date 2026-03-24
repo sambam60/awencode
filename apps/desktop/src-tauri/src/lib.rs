@@ -421,6 +421,84 @@ async fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+fn is_linear_content_browser_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("https://linear.app/") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://linear.app/") {
+        r
+    } else if let Some(r) = lower.strip_prefix("https://www.linear.app/") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://www.linear.app/") {
+        r
+    } else {
+        return false;
+    };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    !path.starts_with("oauth/")
+}
+
+/// Same host/path as `https://…` but with the `linear://` scheme (handled by the Linear desktop app).
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn linear_desktop_scheme_url(url: &str) -> Option<String> {
+    if !is_linear_content_browser_url(url) {
+        return None;
+    }
+    let t = url.trim();
+    let rest = t
+        .strip_prefix("https://")
+        .or_else(|| t.strip_prefix("http://"))
+        .or_else(|| t.strip_prefix("HTTPS://"))
+        .or_else(|| t.strip_prefix("HTTP://"))?;
+    Some(format!("linear://{rest}"))
+}
+
+/// Opens Linear issue/project links in the Linear desktop app when the OS can hand them to
+/// `com.linear` (macOS) or the registered `linear:` protocol handler (Windows/Linux).
+#[tauri::command]
+async fn open_linear_desktop_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("URL is required".to_string());
+    }
+    if !is_linear_content_browser_url(url) {
+        return open_url(url.to_string()).await;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .args(["-b", "com.linear", url])
+            .status();
+        if matches!(&status, Ok(s) if s.success()) {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(desktop_url) = linear_desktop_scheme_url(url) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&desktop_url)
+            .status();
+        if matches!(&status, Ok(s) if s.success()) {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(desktop_url) = linear_desktop_scheme_url(url) {
+        let status = std::process::Command::new("xdg-open")
+            .arg(&desktop_url)
+            .status();
+        if matches!(&status, Ok(s) if s.success()) {
+            return Ok(());
+        }
+    }
+
+    open_url(url.to_string()).await
+}
+
 /// Open a path in an external app by id. Uses heuristics for known app ids (cursor, vscode, code, terminal, finder).
 #[tauri::command]
 async fn open_in_app(app_id: String, path: String) -> Result<(), String> {
@@ -473,6 +551,25 @@ async fn open_in_app(app_id: String, path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn linear_desktop_installed_windows() -> bool {
+    let local = match std::env::var("LOCALAPPDATA") {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let base = Path::new(&local).join("Programs").join("linear");
+    if base.join("Linear.exe").is_file() {
+        return true;
+    }
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        let p = Path::new(&pf).join("Linear").join("Linear.exe");
+        if p.is_file() {
+            return true;
+        }
+    }
+    false
+}
+
 #[tauri::command]
 async fn detect_open_apps() -> Result<Vec<AppListItemResult>, String> {
     #[cfg(target_os = "macos")]
@@ -481,7 +578,19 @@ async fn detect_open_apps() -> Result<Vec<AppListItemResult>, String> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let mut apps = Vec::new();
+        if linear_desktop_installed_windows() {
+            apps.push(AppListItemResult {
+                id: "linear".to_string(),
+                name: "Linear".to_string(),
+                is_accessible: true,
+            });
+        }
+        Ok(apps)
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         Ok(Vec::new())
     }
@@ -618,6 +727,7 @@ fn detect_open_apps_macos() -> Vec<AppListItemResult> {
         ("xcode", "Xcode", "Xcode.app"),
         ("terminal", "Terminal", "Terminal.app"),
         ("finder", "Finder", "Finder.app"),
+        ("linear", "Linear", "Linear.app"),
     ];
     let mut apps = Vec::new();
     for (id, name, bundle) in candidates {
@@ -649,6 +759,8 @@ fn resolve_known_app_path(app_id: &str) -> Option<std::path::PathBuf> {
         "Terminal.app"
     } else if id_lower.contains("finder") {
         "Finder.app"
+    } else if id_lower.contains("linear") {
+        "Linear.app"
     } else {
         return None;
     };
@@ -1271,6 +1383,7 @@ pub fn run() {
             detect_open_apps,
             resolve_app_icon,
             open_url,
+            open_linear_desktop_url,
             get_git_info,
             get_branch_pr,
             get_git_file_status,

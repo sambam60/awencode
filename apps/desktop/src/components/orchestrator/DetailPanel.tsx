@@ -39,6 +39,19 @@ interface DetailPanelProps {
 
 const TABS = ["status", "chat", "files"] as const;
 type Tab = (typeof TABS)[number];
+
+const DETAIL_ACTION_PILL_BASE =
+  "flex min-h-9 flex-1 basis-0 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-medium outline-none backdrop-blur-md transition-[background-color,border-color,backdrop-filter,box-shadow] duration-150";
+
+const DETAIL_ACTION_PILL_IDLE_SURFACE =
+  "border-white/25 bg-white/[0.06] dark:border-white/[0.08] dark:bg-white/[0.03]";
+
+/** Shared hover motion so Done / Archive / Delete read as one family (each adds a tint + border). */
+const DETAIL_ACTION_PILL_HOVER_FX =
+  "hover:backdrop-blur-lg hover:shadow-[0_2px_12px_rgba(0,0,0,0.1)] dark:hover:shadow-[0_2px_18px_rgba(0,0,0,0.32)]";
+
+const DETAIL_ACTION_PILL_FOCUS =
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-blue focus-visible:outline-offset-2";
 type GitThreadActionState = {
   currentBranch: string | null;
   branchMatchesThread: boolean;
@@ -358,7 +371,7 @@ function PrStatusCard({
           ) : null}
         </div>
       </div>
-      <div className="border-t border-border-light px-4 divide-y divide-border-light">
+      <div className="border-t border-border-light px-4">
         <PrStatusRow icon={checksIcon} label={checksLabel} />
         <PrStatusRow
           icon={approvalsIcon}
@@ -540,7 +553,12 @@ function LinkedLinearIssuesCard({
             <button
               type="button"
               onClick={() => onOpenIssue(issue.url)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border-default px-2 py-1 text-[10.5px] text-text-secondary hover:bg-bg-card transition-colors duration-120 cursor-pointer"
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-border-default px-2 py-1 text-[10.5px] text-text-secondary transition-all duration-120",
+                "hover:border-border-focus hover:bg-bg-card hover:text-text-primary hover:shadow-level-1",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue",
+                "active:bg-bg-secondary/90",
+              )}
             >
               Open
               <ArrowUpRight size={11} strokeWidth={1.75} />
@@ -807,7 +825,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
   async function openLinearUrl(url: string) {
     try {
-      await invoke("open_url", { url });
+      await invoke("open_linear_desktop_url", { url });
     } catch (error) {
       setGitError(error instanceof Error ? error.message : "Couldn't open Linear");
     }
@@ -998,9 +1016,9 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         ))}
       </div>
 
-      {/* Tab content — same horizontal inset as header (px-6) */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-auto px-6 py-6 min-h-0">
+      {/* Tab content — footer overlays the scroll area so backdrop blur samples real content */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-auto px-6 py-6 pb-28">
         {tab === "status" && (
           <div className="flex flex-col gap-5">
             <AgentPlanBlock steps={agent.planSteps ?? []} />
@@ -1129,26 +1147,77 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
         )}
         </div>
 
-        <div className="shrink-0 px-6 py-4 space-y-2">
+        {/* Blur sits above scrolling content (not below it in the flex column). */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36"
+          aria-hidden="true"
+        >
+          <div className="absolute inset-x-0 bottom-0 h-32">
+            <div
+              className="absolute inset-0 backdrop-blur-[1px]"
+              style={{
+                maskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%)",
+                WebkitMaskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%)",
+              }}
+            />
+            <div
+              className="absolute inset-0 backdrop-blur-[2px]"
+              style={{
+                maskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%)",
+                WebkitMaskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%)",
+              }}
+            />
+            <div
+              className="absolute inset-0 backdrop-blur-[4px]"
+              style={{
+                maskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 50%)",
+                WebkitMaskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 50%)",
+              }}
+            />
+            <div
+              className="absolute inset-0 backdrop-blur-[8px]"
+              style={{
+                maskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 35%)",
+                WebkitMaskImage:
+                  "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 35%)",
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="absolute inset-x-0 bottom-0 z-20 space-y-2 px-6 pb-4 pt-2">
           {actionError && (
             <p className="text-[11px] text-accent-red leading-snug">{actionError}</p>
           )}
           {gitError && gitDialog === null ? (
             <p className="text-[11px] text-accent-red leading-snug">{gitError}</p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full justify-center gap-2">
             <button
               type="button"
               disabled={agent.status === "deployed"}
               onClick={markDone}
               title="Move this thread to done"
               className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-[7px] text-[11.5px] font-medium text-white transition-all duration-120",
+                DETAIL_ACTION_PILL_BASE,
+                DETAIL_ACTION_PILL_IDLE_SURFACE,
                 agent.status === "deployed"
-                  ? "opacity-60 cursor-default"
-                  : "cursor-pointer hover:brightness-95",
+                  ? "cursor-default border-border-light text-text-faint opacity-60"
+                  : [
+                      "cursor-pointer border-[#5F6AD3]/40 text-[#5F6AD3]",
+                      DETAIL_ACTION_PILL_HOVER_FX,
+                      "hover:border-[#5F6AD3] hover:bg-[#5F6AD3]/24",
+                      DETAIL_ACTION_PILL_FOCUS,
+                      "active:bg-[#5F6AD3]/30",
+                    ],
               )}
-              style={{ backgroundColor: "#5F6AD3" }}
             >
               <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.1} />
               Done
@@ -1163,9 +1232,14 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
                   : "Start a chat session to enable archive"
               }
               className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-md border px-3.5 py-[7px] text-[11.5px] font-medium transition-colors duration-120",
-                "border-border-default text-text-secondary hover:bg-bg-secondary/80",
-                (!canArchive || actionBusy !== null) && "opacity-40 pointer-events-none cursor-not-allowed",
+                DETAIL_ACTION_PILL_BASE,
+                "border-border-default bg-white/[0.06] text-text-secondary dark:bg-white/[0.03]",
+                DETAIL_ACTION_PILL_HOVER_FX,
+                "hover:border-border-focus hover:bg-black/[0.1] dark:hover:bg-white/[0.16]",
+                DETAIL_ACTION_PILL_FOCUS,
+                "active:bg-black/[0.12] dark:active:bg-white/[0.2]",
+                (!canArchive || actionBusy !== null) &&
+                  "pointer-events-none cursor-not-allowed opacity-40 hover:border-border-default hover:bg-white/[0.06] hover:shadow-none hover:backdrop-blur-md dark:hover:bg-white/[0.03]",
               )}
             >
               <Archive className="h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
@@ -1177,9 +1251,15 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               onClick={openDeleteConfirm}
               title="Remove from board and unsubscribe from updates"
               className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-[7px] text-[11.5px] font-medium transition-colors duration-120",
-                "bg-accent-red text-white hover:brightness-95",
-                actionBusy !== null && "opacity-50 pointer-events-none cursor-not-allowed",
+                DETAIL_ACTION_PILL_BASE,
+                DETAIL_ACTION_PILL_IDLE_SURFACE,
+                "border-accent-red/35 text-accent-red dark:border-accent-red/45",
+                DETAIL_ACTION_PILL_HOVER_FX,
+                "hover:border-accent-red hover:bg-accent-red/22",
+                DETAIL_ACTION_PILL_FOCUS,
+                "active:bg-accent-red/28",
+                actionBusy !== null &&
+                  "pointer-events-none cursor-not-allowed opacity-50 hover:border-accent-red/35 hover:bg-white/[0.06] hover:shadow-none hover:backdrop-blur-md dark:hover:border-accent-red/45 dark:hover:bg-white/[0.03]",
               )}
             >
               <Trash2 className="h-3.5 w-3.5 shrink-0 opacity-90" strokeWidth={1.75} />

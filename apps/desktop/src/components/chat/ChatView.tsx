@@ -58,6 +58,7 @@ import {
   type AgentActivity,
   type AgentMessage,
 } from "@/lib/stores/thread-store";
+import type { LinearIssue } from "@/lib/linear";
 import { FileTreeView } from "./FileTreeView";
 import { DiffActivityView } from "./DiffActivityView";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
@@ -1327,7 +1328,7 @@ const APP_ICON_MAP: Record<string, typeof Box> = {
 
 // ─── Open-in button ───────────────────────────────────────────────────────────
 
-function OpenInButton() {
+function OpenInButton({ linkedLinearIssues }: { linkedLinearIssues?: LinearIssue[] }) {
   const [open, setOpen] = useState(false);
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
   const [detectedApps, setDetectedApps] = useState<
@@ -1335,13 +1336,34 @@ function OpenInButton() {
   >([]);
   const projectPath = useAppStore((s) => s.projectPath);
   const apps = useAppListStore((s) => s.apps);
-  const displayApps = useMemo(
-    () =>
-      (detectedApps.length > 0 ? detectedApps : apps).filter(
-        (app) => app.isAccessible,
-      ),
+  const resolvedList = useMemo(
+    () => (detectedApps.length > 0 ? detectedApps : apps),
     [apps, detectedApps],
   );
+  const linearDesktopDetected = useMemo(
+    () =>
+      resolvedList.some(
+        (app) => app.id.toLowerCase() === "linear" && app.isAccessible,
+      ),
+    [resolvedList],
+  );
+  const primaryLinearIssueUrl = useMemo(() => {
+    const list = linkedLinearIssues ?? [];
+    const withUrl = list.find((i) => i.url?.trim());
+    return withUrl?.url?.trim() ?? "";
+  }, [linkedLinearIssues]);
+  const showLinearInMenu = linearDesktopDetected && primaryLinearIssueUrl.length > 0;
+  const menuApps = useMemo(() => {
+    const accessible = resolvedList.filter((app) => app.isAccessible);
+    const withoutLinear = accessible.filter((app) => app.id.toLowerCase() !== "linear");
+    if (showLinearInMenu) {
+      return [
+        ...withoutLinear,
+        { id: "linear", name: "Linear", isAccessible: true },
+      ];
+    }
+    return withoutLinear;
+  }, [resolvedList, showLinearInMenu]);
 
   useEffect(() => {
     invoke<Array<{ id: string; name: string; isAccessible: boolean }>>(
@@ -1357,7 +1379,7 @@ function OpenInButton() {
     let cancelled = false;
     const resolveIcons = async () => {
       const entries = await Promise.all(
-        displayApps.map(async (app) => {
+        menuApps.map(async (app) => {
           try {
             const iconDataUrl = await invoke<string | null>("resolve_app_icon", {
               appId: app.id,
@@ -1382,10 +1404,19 @@ function OpenInButton() {
     return () => {
       cancelled = true;
     };
-  }, [displayApps]);
+  }, [menuApps]);
 
   const handleOpenIn = async (appId: string) => {
     setOpen(false);
+    if (appId.toLowerCase() === "linear") {
+      if (!primaryLinearIssueUrl) return;
+      try {
+        await invoke("open_linear_desktop_url", { url: primaryLinearIssueUrl });
+      } catch {
+        // ignore
+      }
+      return;
+    }
     const path = projectPath;
     if (!path) return;
     try {
@@ -1395,11 +1426,13 @@ function OpenInButton() {
     }
   };
 
-  const firstApp = displayApps[0];
+  const firstApp = menuApps[0];
   const triggerIconUrl = firstApp ? appIcons[firstApp.id] : undefined;
   const TriggerIcon = firstApp
     ? (APP_ICON_MAP[firstApp.id.toLowerCase()] ?? Box)
     : Box;
+  const triggerLinearWordmark =
+    firstApp?.id.toLowerCase() === "linear" && !triggerIconUrl;
 
   return (
     <div className="relative">
@@ -1414,6 +1447,12 @@ function OpenInButton() {
             alt=""
             className="w-4 h-4 rounded-[2px] shrink-0 object-contain"
           />
+        ) : triggerLinearWordmark ? (
+          <img
+            src="/linear_wordmark.svg"
+            alt=""
+            className="h-3 w-auto max-w-[52px] shrink-0 opacity-50 invert dark:invert-0"
+          />
         ) : (
           <TriggerIcon size={12} className="shrink-0" />
         )}
@@ -1421,14 +1460,16 @@ function OpenInButton() {
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-44 rounded-lg glass-overlay z-50 overflow-hidden">
-          {displayApps.map((app) => {
+          {menuApps.map((app) => {
             const Icon = APP_ICON_MAP[app.id.toLowerCase()] ?? Box;
             const iconDataUrl = appIcons[app.id];
+            const isLinear = app.id.toLowerCase() === "linear";
+            const rowDisabled = isLinear ? !primaryLinearIssueUrl : !projectPath;
             return (
               <button
                 key={app.id}
                 onClick={() => handleOpenIn(app.id)}
-                disabled={!projectPath}
+                disabled={rowDisabled}
                 className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none disabled:opacity-50 disabled:cursor-default"
               >
                 {iconDataUrl ? (
@@ -1436,6 +1477,12 @@ function OpenInButton() {
                     src={iconDataUrl}
                     alt=""
                     className="w-4 h-4 rounded-[3px] shrink-0 object-contain"
+                  />
+                ) : isLinear ? (
+                  <img
+                    src="/linear_wordmark.svg"
+                    alt=""
+                    className="h-3 w-auto max-w-[72px] shrink-0 opacity-40 invert dark:invert-0"
                   />
                 ) : (
                   <Icon size={24} className="text-text-faint shrink-0" />
@@ -2101,7 +2148,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             <FolderTree size={12} />
           </button>
           <DiffButton files={agent.files} />
-          <OpenInButton />
+          <OpenInButton linkedLinearIssues={agent.linkedLinearIssues} />
           <GitButton
             pr={agent.pr}
             projectPath={projectPath}
