@@ -3159,6 +3159,7 @@ function ArchivedThreadsSection() {
     setRestoringId(t.id);
     setError(null);
     try {
+      const { selectedModelId, selectedReasoningEffort } = useSettingsStore.getState();
       await rpcRequest("thread/unarchive", { threadId: t.id });
       const resumed = await rpcRequest<{
         thread: {
@@ -3200,6 +3201,8 @@ function ArchivedThreadsSection() {
           blocked: false,
           codexThreadId: thread.id,
           originUrl: originRaw && originRaw.length > 0 ? originRaw : undefined,
+          selectedModelId,
+          selectedReasoningEffort,
         },
         { select: false },
       );

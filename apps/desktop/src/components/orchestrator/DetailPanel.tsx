@@ -28,6 +28,7 @@ import { GlassConfirmDialog } from "@/components/ui/GlassConfirmDialog";
 import { rpcRequest } from "@/lib/rpc-client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/lib/stores/app-store";
+import { getModelDisplayName } from "@/lib/stores/settings-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import type { Agent, AgentActivity, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
@@ -77,10 +78,18 @@ function currentPrUrl(agent: Agent): string | null {
   return `https://github.com/${repoPath}/pull/${prNumber}`;
 }
 
+const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "dev"]);
+
+function isDefaultBranch(branch: string): boolean {
+  return DEFAULT_BRANCHES.has(branch.trim().toLowerCase());
+}
+
 function comparePrUrl(agent: Agent): string | null {
+  const branch = agent.branch.trim();
+  if (!branch || isDefaultBranch(branch)) return null;
   const repoPath = githubRepoPath(agent.originUrl);
-  if (!repoPath || !agent.branch.trim()) return null;
-  return `https://github.com/${repoPath}/compare/${encodeURIComponent(agent.branch)}?expand=1`;
+  if (!repoPath) return null;
+  return `https://github.com/${repoPath}/compare/${encodeURIComponent(branch)}?expand=1`;
 }
 
 function StatCard({ label, value }: { label: string; value: string }) {
@@ -433,10 +442,11 @@ function PrStatusCard({
 
 function GitOverviewCard({
   prStatus,
-  prUrl,
   existingPrUrl,
   prActionLabel,
   prError,
+  prDisabled,
+  prTitle,
   onCommit,
   onPush,
   onViewPr,
@@ -449,10 +459,11 @@ function GitOverviewCard({
   gitHint,
 }: {
   prStatus: PrStatus | null;
-  prUrl: string | null;
   existingPrUrl: string | null;
   prActionLabel: string;
   prError?: string | null;
+  prDisabled: boolean;
+  prTitle?: string;
   onCommit: () => void;
   onPush: () => void;
   onViewPr: () => void;
@@ -489,7 +500,8 @@ function GitOverviewCard({
             icon={<GitPullRequest size={16} strokeWidth={1.8} />}
             label={prActionLabel}
             onClick={onViewPr}
-            disabled={!prUrl}
+            disabled={prDisabled}
+            title={prTitle}
           />
           <GitActionRow
             icon={<GitBranch size={16} strokeWidth={1.8} />}
@@ -604,13 +616,22 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const canArchive = Boolean(threadId);
   const canRunGitActions = Boolean(projectPath);
   const modelsUsed = agent.modelsUsed ?? [];
+  const modelSummary =
+    modelsUsed.length > 0
+      ? modelsUsed.map((model) => getModelDisplayName(model)).join(", ")
+      : agent.selectedModelId
+        ? getModelDisplayName(agent.selectedModelId)
+        : null;
   const linkedLinearIssues = agent.linkedLinearIssues ?? [];
 
   const [detectedPrUrl, setDetectedPrUrl] = useState<string | null>(null);
   const [prError, setPrError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!projectPath) return;
+    if (!projectPath || isDefaultBranch(agent.branch)) {
+      setDetectedPrUrl(null);
+      return;
+    }
     let cancelled = false;
     invoke<{ number: number; url: string } | null>("get_branch_pr", {
       path: projectPath,
@@ -644,12 +665,16 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
     return () => { cancelled = true; };
   }, [projectPath, agent.branch, agent.files]);
 
-  const existingPrUrl = currentPrUrl(agent) ?? detectedPrUrl;
+  const onDefaultBranch = isDefaultBranch(agent.branch);
+  const existingPrUrl = onDefaultBranch ? null : (currentPrUrl(agent) ?? detectedPrUrl);
   const prUrl = existingPrUrl ?? comparePrUrl(agent);
   const prActionLabel = existingPrUrl ? "Open PR" : "Create PR";
 
   useEffect(() => {
-    if (!projectPath) return;
+    if (!projectPath || isDefaultBranch(agent.branch)) {
+      updateAgentPrStatus(agent.id, null);
+      return;
+    }
     setPrError(null);
     invoke<{
       checksState: "success" | "failure" | "pending" | "none";
@@ -972,9 +997,9 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
             <GitBranch size={10} strokeWidth={1.75} className="opacity-50 shrink-0" />
             {agent.branch}
           </span>
-          {modelsUsed.length > 0 && (
+          {modelSummary && (
             <span className="text-[10px] text-text-faint">
-              {modelsUsed.join(", ")}
+              {modelSummary}
             </span>
           )}
           {agent.originUrl && (() => {
@@ -1030,10 +1055,15 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
             <GitOverviewCard
               prStatus={agent.prStatus ?? null}
-              prUrl={prUrl}
               existingPrUrl={existingPrUrl}
               prActionLabel={prActionLabel}
               prError={prError}
+              prDisabled={!prUrl || gitBusy !== null}
+              prTitle={
+                !existingPrUrl && onDefaultBranch
+                  ? "Create a feature branch first to open a PR"
+                  : undefined
+              }
               onCommit={() => {
                 setGitError(null);
                 setGitDialog("commit");

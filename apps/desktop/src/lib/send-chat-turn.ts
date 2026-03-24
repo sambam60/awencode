@@ -12,9 +12,10 @@ import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import {
-  getSelectedModel,
-  getSelectedReasoningEffort,
+  getModelById,
+  getReasoningEffortOrDefault,
   useSettingsStore,
+  type CuratedModelOption,
 } from "@/lib/stores/settings-store";
 import { buildLinearDynamicTools } from "@/lib/linear-thread-tools";
 import type { Attachment } from "@/components/chat/ComposeArea";
@@ -109,8 +110,9 @@ function shouldRefreshProviderCredentials(
   return false;
 }
 
-async function validateSelectedProvider(): Promise<ProviderValidationResult> {
-  const selected = getSelectedModel();
+async function validateSelectedProvider(
+  selected: CuratedModelOption,
+): Promise<ProviderValidationResult> {
   const keyStatuses = await invoke<ApiKeyStatuses>("api_key_statuses");
   const azureDeployments = useSettingsStore.getState().azureDeployments;
 
@@ -195,6 +197,10 @@ export async function sendChatTurn(
   const projectPath = useAppStore.getState().projectPath;
   const wasUnsetTitle = agent.title === NEW_THREAD_TITLE;
   const firstUserSend = agent.messages.length === 0;
+  const selectedModel = getModelById(agent.selectedModelId);
+  const selectedReasoningEffort = getReasoningEffortOrDefault(
+    agent.selectedReasoningEffort,
+  );
 
   const displayContent =
     trimmed ||
@@ -233,7 +239,7 @@ export async function sendChatTurn(
   }
 
   try {
-    const validation = await validateSelectedProvider();
+    const validation = await validateSelectedProvider(selectedModel);
     if (!validation.ok) {
       appendLocalAgentError(agentId, validation.message);
       setAgentStatus(agentId, "review");
@@ -241,7 +247,7 @@ export async function sendChatTurn(
     }
 
     const tryOpenAiFallback = async (error: unknown): Promise<boolean> => {
-      if (getSelectedModel().provider !== "openai" || !shouldFallbackOpenAiAuth(error)) {
+      if (selectedModel.provider !== "openai" || !shouldFallbackOpenAiAuth(error)) {
         return false;
       }
       const keyStatuses = await invoke<ApiKeyStatuses>("api_key_statuses");
@@ -251,7 +257,7 @@ export async function sendChatTurn(
     };
 
     const tryProviderCredentialRefresh = async (error: unknown): Promise<boolean> => {
-      const provider = getSelectedModel().provider;
+      const provider = selectedModel.provider;
       if (!shouldRefreshProviderCredentials(provider, error)) {
         return false;
       }
@@ -271,7 +277,7 @@ export async function sendChatTurn(
       }) => {
         threadId = res?.thread?.id;
         if (threadId) setAgentCodexThreadId(agentId, threadId);
-        addAgentModel(agentId, res?.model ?? getSelectedModel().id);
+        addAgentModel(agentId, res?.model ?? selectedModel.id);
         const serverName =
           typeof res?.thread?.name === "string" ? res.thread.name.trim() : "";
         if (serverName.length > 0) {
@@ -287,8 +293,8 @@ export async function sendChatTurn(
           model?: string | null;
         }>("thread/start", {
           cwd: projectPath ?? undefined,
-          model: getSelectedModel().id,
-          modelProvider: getSelectedModel().provider,
+          model: selectedModel.id,
+          modelProvider: selectedModel.provider,
           developerInstructions: linearAutoSyncDeveloperInstruction(),
           dynamicTools: buildLinearDynamicTools(),
         });
@@ -303,7 +309,7 @@ export async function sendChatTurn(
             } catch (retryAfterRefreshError) {
               appendLocalAgentError(
                 agentId,
-                `Couldn't start a Codex thread with ${providerLabel(getSelectedModel().provider)} after refreshing credentials: ${extractErrorMessage(retryAfterRefreshError)}`,
+                `Couldn't start a Codex thread with ${providerLabel(selectedModel.provider)} after refreshing credentials: ${extractErrorMessage(retryAfterRefreshError)}`,
               );
               setAgentStatus(agentId, "review");
               return;
@@ -311,7 +317,7 @@ export async function sendChatTurn(
           }
           appendLocalAgentError(
             agentId,
-            `Couldn't start a Codex thread with ${providerLabel(getSelectedModel().provider)}: ${extractErrorMessage(e)}`,
+          `Couldn't start a Codex thread with ${providerLabel(selectedModel.provider)}: ${extractErrorMessage(e)}`,
           );
           setAgentStatus(agentId, "review");
           return;
@@ -321,7 +327,7 @@ export async function sendChatTurn(
         } catch (retryError) {
           appendLocalAgentError(
             agentId,
-            `Couldn't start a Codex thread with ${providerLabel(getSelectedModel().provider)} after falling back to your API key: ${extractErrorMessage(retryError)}`,
+          `Couldn't start a Codex thread with ${providerLabel(selectedModel.provider)} after falling back to your API key: ${extractErrorMessage(retryError)}`,
           );
           setAgentStatus(agentId, "review");
           return;
@@ -335,8 +341,8 @@ export async function sendChatTurn(
         await rpcRequest("thread/resume", {
           threadId,
           cwd: projectPath ?? undefined,
-          model: getSelectedModel().id,
-          modelProvider: getSelectedModel().provider,
+          model: selectedModel.id,
+          modelProvider: selectedModel.provider,
           developerInstructions: linearAutoSyncDeveloperInstruction(),
           dynamicTools: buildLinearDynamicTools(),
         });
@@ -405,7 +411,7 @@ export async function sendChatTurn(
       rpcRequest("turn/start", {
         threadId,
         input: inputItems,
-        effort: getSelectedReasoningEffort(),
+        effort: selectedReasoningEffort,
       });
 
     const resumeThreadIfNeeded = async (error: unknown): Promise<boolean> => {
@@ -415,8 +421,8 @@ export async function sendChatTurn(
         await rpcRequest("thread/resume", {
           threadId,
           cwd: projectPath ?? undefined,
-          model: getSelectedModel().id,
-          modelProvider: getSelectedModel().provider,
+          model: selectedModel.id,
+          modelProvider: selectedModel.provider,
           developerInstructions: linearAutoSyncDeveloperInstruction(),
           dynamicTools: buildLinearDynamicTools(),
         });
@@ -451,7 +457,7 @@ export async function sendChatTurn(
           } catch (retryAfterRefreshError) {
             appendLocalAgentError(
               agentId,
-              `Couldn't start the turn with ${providerLabel(getSelectedModel().provider)} after refreshing credentials: ${extractErrorMessage(retryAfterRefreshError)}`,
+              `Couldn't start the turn with ${providerLabel(selectedModel.provider)} after refreshing credentials: ${extractErrorMessage(retryAfterRefreshError)}`,
             );
             setAgentStatus(agentId, "review");
             return;
@@ -459,7 +465,7 @@ export async function sendChatTurn(
         }
         appendLocalAgentError(
           agentId,
-          `Couldn't start the turn with ${providerLabel(getSelectedModel().provider)}: ${extractErrorMessage(currentError)}`,
+          `Couldn't start the turn with ${providerLabel(selectedModel.provider)}: ${extractErrorMessage(currentError)}`,
         );
         setAgentStatus(agentId, "review");
         return;
@@ -469,7 +475,7 @@ export async function sendChatTurn(
       } catch (retryError) {
         appendLocalAgentError(
           agentId,
-          `Couldn't start the turn with ${providerLabel(getSelectedModel().provider)} after falling back to your API key: ${extractErrorMessage(retryError)}`,
+          `Couldn't start the turn with ${providerLabel(selectedModel.provider)} after falling back to your API key: ${extractErrorMessage(retryError)}`,
         );
         setAgentStatus(agentId, "review");
       }

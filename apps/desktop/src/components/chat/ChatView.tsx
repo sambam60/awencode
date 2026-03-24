@@ -49,6 +49,7 @@ import { sendChatTurn } from "@/lib/send-chat-turn";
 import { submitPromptEditRevert } from "@/lib/submit-prompt-edit";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
+import { useSettingsStore } from "@/lib/stores/settings-store";
 import { useViewStore } from "@/lib/stores/view-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
@@ -1042,10 +1043,16 @@ function GitButton({
   const [gitError, setGitError] = useState<string | null>(null);
   const [detectedPrUrl, setDetectedPrUrl] = useState<string | null>(null);
 
-  const hasPr = Boolean(pr) || Boolean(detectedPrUrl);
+  const DEFAULT_BRANCHES = ["main", "master", "develop", "dev"];
+  const onDefaultBranch = DEFAULT_BRANCHES.includes(branch.trim().toLowerCase());
+  const hasPr = onDefaultBranch ? false : (Boolean(pr) || Boolean(detectedPrUrl));
+  const canCreatePr = !hasPr && !onDefaultBranch && Boolean(branch.trim());
 
   useEffect(() => {
-    if (!projectPath) return;
+    if (!projectPath || onDefaultBranch) {
+      setDetectedPrUrl(null);
+      return;
+    }
     let cancelled = false;
     invoke<{ number: number; url: string } | null>("get_branch_pr", {
       path: projectPath,
@@ -1061,7 +1068,7 @@ function GitButton({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [projectPath, branch]);
+  }, [projectPath, branch, onDefaultBranch]);
 
   const handleCommit = async () => {
     if (!projectPath || commitBusy) return;
@@ -1119,12 +1126,10 @@ function GitButton({
         await invoke("open_url", {
           url: `https://github.com/${repo}/pull/${encodeURIComponent(prNum)}`,
         });
-      } else {
-        if (branch) {
-          await invoke("open_url", {
-            url: `https://github.com/${repo}/compare/${encodeURIComponent(branch)}?expand=1`,
-          });
-        }
+      } else if (branch && !onDefaultBranch) {
+        await invoke("open_url", {
+          url: `https://github.com/${repo}/compare/${encodeURIComponent(branch)}?expand=1`,
+        });
       }
     } catch {
       // ignore
@@ -1209,7 +1214,18 @@ function GitButton({
           <div className="border-t border-border-light" role="separator" />
           <button
             onClick={handlePRAction}
-            className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
+            disabled={!hasPr && !canCreatePr}
+            title={
+              !hasPr && onDefaultBranch
+                ? "Create a feature branch first to open a PR"
+                : undefined
+            }
+            className={cn(
+              "w-full flex items-center gap-2.5 px-3 py-2 text-left outline-none",
+              !hasPr && !canCreatePr
+                ? "opacity-45 cursor-not-allowed"
+                : "glass-menu-row cursor-pointer",
+            )}
           >
             <img
               src="/octicon.svg"
@@ -1942,6 +1958,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     let branch = "";
     let originUrl: string | undefined;
     const cwd = useAppStore.getState().projectPath;
+    const { selectedModelId, selectedReasoningEffort } = useSettingsStore.getState();
     if (cwd) {
       try {
         const info = await invoke<{ branch?: string | null; originUrl?: string | null }>(
@@ -1968,6 +1985,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       messages: [],
       blocked: false,
       originUrl,
+      selectedModelId,
+      selectedReasoningEffort,
     });
     setView("chat");
   }, [addAgent, discardBlankQueuedAgent, setView]);
@@ -2069,7 +2088,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               discardBlankQueuedAgent();
               onBack();
             }}
-            className="flex items-center gap-1.5 shrink-0 rounded px-1 -mx-1 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer group/title-back"
+            className="flex min-w-0 max-w-[min(240px,42vw)] shrink items-center gap-1.5 rounded px-1 -mx-1 hover:bg-bg-secondary transition-colors duration-120 cursor-pointer group/title-back"
             title="Back to board"
           >
             <ChevronLeft
@@ -2078,7 +2097,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
               className="shrink-0 text-text-faint group-hover/title-back:text-text-secondary transition-colors duration-120"
             />
             {appProjectName ? (
-              <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate max-w-[min(200px,30vw)]">
+              <span className="min-w-0 flex-1 truncate text-left font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight">
                 {appProjectName}
               </span>
             ) : null}
@@ -2098,7 +2117,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             style={{ color: statusVisual.color }}
             aria-hidden
           />
-          <span className="font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight truncate min-w-0">
+          <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-medium text-text-primary tracking-[-0.01em] leading-tight">
             {agent.title}
           </span>
         </div>

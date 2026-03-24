@@ -134,7 +134,9 @@ pub enum CodexErr {
     )]
     UsageNotIncluded,
 
-    #[error("We're currently experiencing high demand, which may cause temporary errors.")]
+    #[error(
+        "The provider returned an internal server error. If this persists, try a different model or check your API provider status."
+    )]
     InternalServerError,
 
     /// Retry limit exceeded.

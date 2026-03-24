@@ -68,6 +68,12 @@ export const CURATED_MODELS: CuratedModelOption[] = [
     description: "Fast, cost-effective iteration",
   },
   {
+    id: "openrouter/auto",
+    provider: "openrouter",
+    name: "OpenRouter Auto",
+    description: "Lets OpenRouter pick the best routed model for the job",
+  },
+  {
     id: "anthropic/claude-sonnet-4.6",
     provider: "openrouter",
     name: "Claude Sonnet 4.6",
@@ -80,7 +86,7 @@ export const CURATED_MODELS: CuratedModelOption[] = [
     description: "Best for large, long-running refactors; via OpenRouter",
   },
   {
-    id: "google/gemini-3.1-pro",
+    id: "google/gemini-3.1-pro-preview",
     provider: "openrouter",
     name: "Gemini 3.1 Pro",
     description: "Strong planning + long context; via OpenRouter",
@@ -276,13 +282,16 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "awencode-settings",
-      version: 4,
+      version: 5,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== "object") {
           return persistedState;
         }
 
         const nextState = { ...(persistedState as Record<string, unknown>) };
+        const LEGACY_MODEL_IDS: Record<string, string> = {
+          "google/gemini-3.1-pro": "google/gemini-3.1-pro-preview",
+        };
         delete nextState.openAiApiKey;
         delete nextState.openRouterApiKey;
         delete nextState.azureApiKey;
@@ -309,10 +318,21 @@ export const useSettingsStore = create<SettingsState>()(
           typeof nextState.modelProviderOverrides === "object"
         ) {
           nextState.modelProviderOverrides = Object.fromEntries(
-            Object.entries(nextState.modelProviderOverrides as Record<string, unknown>).filter(
-              ([, provider]) => provider !== "azure-openai-custom",
+            Object.entries(nextState.modelProviderOverrides as Record<string, unknown>)
+              .filter(([, provider]) => provider !== "azure-openai-custom")
+              .map(([modelId, provider]) => [LEGACY_MODEL_IDS[modelId] ?? modelId, provider]),
+          );
+        }
+        if (nextState.enabledModels && typeof nextState.enabledModels === "object") {
+          nextState.enabledModels = Object.fromEntries(
+            Object.entries(nextState.enabledModels as Record<string, unknown>).map(
+              ([modelId, enabled]) => [LEGACY_MODEL_IDS[modelId] ?? modelId, enabled],
             ),
           );
+        }
+        if (typeof nextState.selectedModelId === "string") {
+          nextState.selectedModelId =
+            LEGACY_MODEL_IDS[nextState.selectedModelId] ?? nextState.selectedModelId;
         }
         if (
           typeof nextState.selectedModelId === "string" &&
@@ -363,27 +383,56 @@ export const useSettingsStore = create<SettingsState>()(
   ),
 );
 
-export function getSelectedModel(): CuratedModelOption {
-  const { selectedModelId, modelProviderOverrides, azureDeployments } =
-    useSettingsStore.getState();
+function resolveModelById(
+  modelId: string | null | undefined,
+  state: Pick<SettingsState, "selectedModelId" | "modelProviderOverrides" | "azureDeployments">,
+): CuratedModelOption {
+  const normalizedModelId = modelId?.trim() || state.selectedModelId;
+  const { modelProviderOverrides, azureDeployments } = state;
   const azureModels = buildAzureDeploymentModels(azureDeployments);
-  const deploymentMatch = azureModels.find((model) => model.id === selectedModelId);
+  const deploymentMatch = azureModels.find((model) => model.id === normalizedModelId);
   if (deploymentMatch) {
     return deploymentMatch;
   }
 
   const curatedBase =
-    CURATED_MODELS.find((m) => m.id === selectedModelId) ?? CURATED_MODELS[0];
+    CURATED_MODELS.find((m) => m.id === normalizedModelId) ??
+    CURATED_MODELS.find((m) => m.id === state.selectedModelId) ??
+    CURATED_MODELS[0];
 
-  const override = modelProviderOverrides[selectedModelId];
+  const override = modelProviderOverrides[normalizedModelId];
   const provider =
     override && override !== "azure-openai-custom" ? override : curatedBase.provider;
 
   return { ...curatedBase, provider };
 }
 
+export function getModelById(modelId: string | null | undefined): CuratedModelOption {
+  return resolveModelById(modelId, useSettingsStore.getState());
+}
+
+export function getSelectedModel(): CuratedModelOption {
+  const state = useSettingsStore.getState();
+  return resolveModelById(state.selectedModelId, state);
+}
+
+export function getModelDisplayName(modelId: string | null | undefined): string {
+  const normalizedModelId = modelId?.trim();
+  if (!normalizedModelId) return "";
+  const { azureDeployments } = useSettingsStore.getState();
+  const exactMatch = [...CURATED_MODELS, ...buildAzureDeploymentModels(azureDeployments)].find(
+    (model) => model.id === normalizedModelId,
+  );
+  return exactMatch?.name ?? normalizedModelId;
+}
+
+export function getReasoningEffortOrDefault(
+  effort: ReasoningEffort | null | undefined,
+): ReasoningEffort {
+  return effort ?? DEFAULT_REASONING_EFFORT;
+}
+
 export function getSelectedReasoningEffort(): ReasoningEffort {
-  const { selectedReasoningEffort } = useSettingsStore.getState();
-  return selectedReasoningEffort ?? DEFAULT_REASONING_EFFORT;
+  return getReasoningEffortOrDefault(useSettingsStore.getState().selectedReasoningEffort);
 }
 

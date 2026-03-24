@@ -1,0 +1,216 @@
+name: desktop-release
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "desktop-v*"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            args: --target aarch64-apple-darwin
+            artifactPath: apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle
+          - name: macOS Intel
+            platform: macos-latest
+            args: --target x86_64-apple-darwin
+            artifactPath: apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle
+          - name: Windows
+            platform: windows-latest
+            args: ""
+            artifactPath: apps/desktop/src-tauri/target/release/bundle
+          - name: Linux
+            platform: ubuntu-22.04
+            args: ""
+            artifactPath: apps/desktop/src-tauri/target/release/bundle
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./apps/desktop/src-tauri -> target"
+          cache-on-failure: true
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate macOS signing and notarization secrets
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          missing=()
+
+          for var_name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD; do
+            if [ -z "${!var_name}" ]; then
+              missing+=("$var_name")
+            fi
+          done
+
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ]; then
+            if [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_PRIVATE_KEY" ]; then
+              missing+=("APPLE_ID/APPLE_PASSWORD or APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_PRIVATE_KEY")
+            fi
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required macOS secrets:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Prepare App Store Connect API key
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_PRIVATE_KEY" ]; then
+            api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%s' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+            echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import Apple signing certificate
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/certificate.p12"
+          echo -n "$APPLE_CERTIFICATE" | base64 -D > "$certificate_path"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$certificate_path" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+      - name: Resolve Apple signing identity
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -n "$APPLE_SIGNING_IDENTITY_SECRET" ]; then
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY_SECRET" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          identity=$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/Developer ID Application|Apple Distribution/ { print $2; exit }')
+
+          if [ -z "$identity" ]; then
+            identity=$(security find-identity -v -p codesigning build.keychain | awk -F'"' 'NR == 1 { print $2 }')
+          fi
+
+          if [ -z "$identity" ]; then
+            echo "Unable to determine APPLE_SIGNING_IDENTITY from the imported certificate." >&2
+            exit 1
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Build desktop bundles and publish release
+        if: github.event_name != 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWENCODE_GITHUB_CLIENT_ID: ${{ vars.AWENCODE_GITHUB_CLIENT_ID }}
+          AWENCODE_LINEAR_CLIENT_ID: ${{ vars.AWENCODE_LINEAR_CLIENT_ID }}
+          AWENCODE_LINEAR_CLIENT_SECRET: ${{ secrets.AWENCODE_LINEAR_CLIENT_SECRET }}
+          AWENCODE_LINEAR_REDIRECT_URI: ${{ vars.AWENCODE_LINEAR_REDIRECT_URI }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Awencode Desktop ${{ github.ref_name }}
+          releaseBody: See the assets for installers and bundles for macOS, Windows, and Linux.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build desktop bundles
+        if: github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWENCODE_GITHUB_CLIENT_ID: ${{ vars.AWENCODE_GITHUB_CLIENT_ID }}
+          AWENCODE_LINEAR_CLIENT_ID: ${{ vars.AWENCODE_LINEAR_CLIENT_ID }}
+          AWENCODE_LINEAR_CLIENT_SECRET: ${{ secrets.AWENCODE_LINEAR_CLIENT_SECRET }}
+          AWENCODE_LINEAR_REDIRECT_URI: ${{ vars.AWENCODE_LINEAR_REDIRECT_URI }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        with:
+          projectPath: apps/desktop
+          args: ${{ matrix.args }}
+
+      - name: Upload workflow artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }} bundles
+          path: ${{ matrix.artifactPath }}

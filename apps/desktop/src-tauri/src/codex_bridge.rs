@@ -11,6 +11,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
 
+use crate::app_env::optional_env_var;
+
 /// Returns `~/.awencode`, creating it if it does not exist.
 /// This is Awencode's isolated Codex home — separate from `~/.codex` used by the
 /// official OpenAI Codex CLI / app so the two never share sessions or config.
@@ -29,6 +31,43 @@ pub(crate) fn awencode_codex_home() -> std::io::Result<PathBuf> {
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn codex_app_server_candidates() -> Vec<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(3)
+        .map(PathBuf::from)
+        .unwrap_or(manifest_dir);
+    vec![
+        workspace_root.join("codex-rs/target/debug/codex-app-server"),
+        workspace_root.join("codex-rs/target/release/codex-app-server"),
+    ]
+}
+
+fn resolve_codex_app_server_binary() -> Result<PathBuf, String> {
+    if let Some(override_path) = optional_env_var("AWENCODE_CODEX_APP_SERVER_PATH") {
+        let path = PathBuf::from(&override_path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "AWENCODE_CODEX_APP_SERVER_PATH points to a missing file: {override_path}"
+        ));
+    }
+
+    for candidate in codex_app_server_candidates() {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    which::which("codex-app-server").map_err(|e| {
+        format!(
+            "codex-app-server binary not found in PATH: {e}. Build codex-rs (app-server) first."
+        )
+    })
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
@@ -116,11 +155,7 @@ impl CodexBridge {
     }
 
     pub async fn start(&mut self, app_handle: &AppHandle) -> Result<(), String> {
-        let codex_bin = which::which("codex-app-server").map_err(|e| {
-            format!(
-                "codex-app-server binary not found in PATH: {e}. Build codex-rs (app-server) first."
-            )
-        })?;
+        let codex_bin = resolve_codex_app_server_binary()?;
 
         let codex_home = awencode_codex_home()
             .map_err(|e| format!("Failed to create Awencode data directory: {e}"))?;
@@ -147,6 +182,7 @@ impl CodexBridge {
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
 
         self.child = Some(child);
         self.stdin = Some(stdin);
@@ -177,6 +213,14 @@ impl CodexBridge {
                         }
                     }
                 }
+            }
+        });
+
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[codex-app-server] {line}");
             }
         });
 

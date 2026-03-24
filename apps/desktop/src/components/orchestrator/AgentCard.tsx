@@ -12,6 +12,7 @@ import { useThreadStore } from "@/lib/stores/thread-store";
 import { interruptTurn } from "@/lib/codex-turn";
 import { sendChatTurn } from "@/lib/send-chat-turn";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
+import { getModelDisplayName } from "@/lib/stores/settings-store";
 import type { Agent } from "@/lib/stores/thread-store";
 
 interface AgentCardProps {
@@ -46,8 +47,9 @@ function snippetText(agent: Agent, queuedDraft: string): string {
 }
 
 function modelSummaryForCard(models: string[]): string {
-  if (models.length <= 2) return models.join(", ");
-  return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
+  const labels = models.map((model) => getModelDisplayName(model));
+  if (labels.length <= 2) return labels.join(", ");
+  return `${labels.slice(0, 2).join(", ")} +${labels.length - 2}`;
 }
 
 /** SVG ring: arc length tracks `percent` (null = track empty). */
@@ -158,6 +160,9 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
     composeDraft.trim().length > 0 && !playSending;
   const contextPct = getAgentContextPercent(agent);
   const diffStats = getAgentDiffStats(agent);
+  const currentModelLabel = agent.selectedModelId
+    ? getModelDisplayName(agent.selectedModelId)
+    : null;
 
   const handlePlayQueued = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -368,10 +373,12 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
         >
           <span className="font-mono leading-snug truncate">
             {agent.branch}
-            {(agent.modelsUsed?.length ?? 0) > 0 && (
+            {((agent.modelsUsed?.length ?? 0) > 0 || currentModelLabel) && (
               <>
                 {" • "}
-                {modelSummaryForCard(agent.modelsUsed ?? [])}
+                {(agent.modelsUsed?.length ?? 0) > 0
+                  ? modelSummaryForCard(agent.modelsUsed ?? [])
+                  : currentModelLabel}
               </>
             )}
           </span>
@@ -384,7 +391,7 @@ export function AgentCard({ agent, selected, onOpenThread, onOpenDetails, compac
           <MetaItem icon={<Box size={12} strokeWidth={1.75} />}>
             {(agent.modelsUsed?.length ?? 0) > 0
               ? modelSummaryForCard(agent.modelsUsed ?? [])
-              : "—"}
+              : currentModelLabel ?? "—"}
           </MetaItem>
           <div className="inline-flex items-center gap-1.5 min-w-0 max-w-[min(100%,11rem)]">
             <ContextUsageRing percent={contextPct} />

@@ -9,6 +9,7 @@ import { tabNameFromPath, useAppStore } from "@/lib/stores/app-store";
 import { addRecentProject, getRecentProjects } from "@/lib/recent-projects";
 import { useViewStore } from "@/lib/stores/view-store";
 import { BOARD_COLUMN_IDS, useBoardUiStore } from "@/lib/stores/board-ui-store";
+import { useSettingsStore } from "@/lib/stores/settings-store";
 import { STATUS_CONFIG } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -94,6 +95,7 @@ export function Orchestrator() {
     let branch = "";
     let originUrl: string | undefined;
     const cwd = useAppStore.getState().projectPath;
+    const { selectedModelId, selectedReasoningEffort } = useSettingsStore.getState();
     if (cwd) {
       try {
         const info = await invoke<{ branch?: string | null; originUrl?: string | null }>("get_git_info", {
@@ -119,6 +121,8 @@ export function Orchestrator() {
       messages: [],
       blocked: false,
       originUrl,
+      selectedModelId,
+      selectedReasoningEffort,
     });
     setView("chat");
   };
@@ -218,13 +222,13 @@ export function Orchestrator() {
                           : `Switch to ${tab.name}`
                       }
                       className={cn(
-                        "inline-flex h-7 min-w-0 max-w-[152px] items-center truncate rounded-md pl-1 pr-1.5 font-sans text-[13px] font-medium leading-none tracking-[-0.01em] transition-colors duration-120 cursor-pointer",
+                        "inline-flex h-7 min-w-0 max-w-[152px] items-center rounded-md pl-1 pr-1.5 font-sans text-[13px] font-medium leading-none tracking-[-0.01em] transition-colors duration-120 cursor-pointer",
                         active
                           ? "text-text-primary bg-bg-secondary/70"
                           : "text-text-secondary hover:text-text-primary hover:bg-bg-secondary/80",
                       )}
                     >
-                      {tab.name}
+                      <span className="min-w-0 flex-1 truncate text-left">{tab.name}</span>
                     </button>
                   </div>
                 );
@@ -306,7 +310,7 @@ export function Orchestrator() {
           <div
             className={cn(
               "flex min-w-full flex-1 gap-0 px-[clamp(12px,2vw,24px)] py-[clamp(12px,2vw,20px)]",
-              selected && "pr-[360px]",
+              selected && "pr-[384px]",
             )}
           >
             {BOARD_COLUMN_IDS.map((col, i) => {
@@ -447,7 +451,7 @@ export function Orchestrator() {
 
         {/* Detail panel — overlays from right, glass; covers columns when narrow */}
         {selected && (
-          <div className="absolute right-0 top-0 bottom-0 z-10">
+          <div className="absolute right-0 top-0 bottom-0 z-10 flex pl-6">
             <DetailPanel
               agent={selected}
               onClose={() => selectAgent(null)}

@@ -3,7 +3,7 @@ import { buildLinearDynamicTools } from "@/lib/linear-thread-tools";
 import { rpcRequest } from "@/lib/rpc-client";
 import { sendChatTurn } from "@/lib/send-chat-turn";
 import { useAppStore } from "@/lib/stores/app-store";
-import { getSelectedModel, useSettingsStore } from "@/lib/stores/settings-store";
+import { getModelById, useSettingsStore } from "@/lib/stores/settings-store";
 import { useThreadStore, type AgentMessage } from "@/lib/stores/thread-store";
 
 const LINEAR_AUTO_SYNC_DEVELOPER_INSTRUCTION =
@@ -37,6 +37,7 @@ export async function submitPromptEditRevert(
 ): Promise<void> {
   const agent = useThreadStore.getState().agents.find((a) => a.id === agentId);
   if (!agent) return;
+  const selectedModel = getModelById(agent.selectedModelId);
 
   const numTurns = countUserMessagesFrom(agent.messages, messageIndex);
   if (numTurns < 1) return;
@@ -52,8 +53,8 @@ export async function submitPromptEditRevert(
           await rpcRequest("thread/resume", {
             threadId,
             cwd: projectPath ?? undefined,
-            model: getSelectedModel().id,
-            modelProvider: getSelectedModel().provider,
+            model: selectedModel.id,
+            modelProvider: selectedModel.provider,
             developerInstructions: linearAutoSyncDeveloperInstruction(),
             dynamicTools: buildLinearDynamicTools(),
           });

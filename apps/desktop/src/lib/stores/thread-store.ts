@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { LinearIssue } from "@/lib/linear";
+import type { ReasoningEffort } from "@/lib/stores/settings-store";
 
 export type AgentStatus = "queued" | "active" | "review" | "deployed";
 
@@ -117,6 +118,10 @@ export interface Agent {
   linkedLinearIssues?: LinearIssue[];
   /** Distinct models used by this thread over time. */
   modelsUsed?: string[];
+  /** Thread-scoped composer model selection (falls back to settings default when unset). */
+  selectedModelId?: string | null;
+  /** Thread-scoped composer reasoning level (falls back to settings default when unset). */
+  selectedReasoningEffort?: ReasoningEffort | null;
 }
 
 export interface PrStatus {
@@ -173,6 +178,8 @@ interface ThreadState {
     diff: string | null,
     files: string[],
   ) => void;
+  setAgentSelectedModelId: (agentId: string, modelId: string) => void;
+  setAgentSelectedReasoningEffort: (agentId: string, effort: ReasoningEffort) => void;
   addAgentModel: (agentId: string, model: string) => void;
   removeAgent: (agentId: string) => void;
   /** Drop messages from `fromIndex` onward and reset in-flight UI state (prompt edit / rollback). */
@@ -191,7 +198,18 @@ export const useThreadStore = create<ThreadState>((set) => ({
   agents: [],
   selectedAgentId: null,
   selectAgent: (id) => set({ selectedAgentId: id }),
-  setAgents: (agents) => set({ agents }),
+  setAgents: (agents) =>
+    set({
+      agents: agents.map((agent) => ({
+        ...agent,
+        activities: agent.activities ?? [],
+        linkedLinearIssues: agent.linkedLinearIssues ?? [],
+        planSteps: agent.planSteps ?? [],
+        modelsUsed: agent.modelsUsed ?? [],
+        selectedModelId: agent.selectedModelId ?? null,
+        selectedReasoningEffort: agent.selectedReasoningEffort ?? null,
+      })),
+    }),
   addAgent: (agent, options) =>
     set((s) => ({
       agents: [
@@ -202,6 +220,8 @@ export const useThreadStore = create<ThreadState>((set) => ({
           linkedLinearIssues: agent.linkedLinearIssues ?? [],
           planSteps: agent.planSteps ?? [],
           modelsUsed: agent.modelsUsed ?? [],
+          selectedModelId: agent.selectedModelId ?? null,
+          selectedReasoningEffort: agent.selectedReasoningEffort ?? null,
         },
       ],
       selectedAgentId:
@@ -503,6 +523,20 @@ export const useThreadStore = create<ThreadState>((set) => ({
               files,
             }
           : a,
+      ),
+    })),
+
+  setAgentSelectedModelId: (agentId, modelId) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, selectedModelId: modelId.trim() || null } : a,
+      ),
+    })),
+
+  setAgentSelectedReasoningEffort: (agentId, effort) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === agentId ? { ...a, selectedReasoningEffort: effort } : a,
       ),
     })),
 

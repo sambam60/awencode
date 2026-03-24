@@ -145,6 +145,7 @@ export function useCodexNotifications() {
   const updateAgentUsage = useThreadStore((s) => s.updateAgentUsage);
   const updateAgentDiff = useThreadStore((s) => s.updateAgentDiff);
   const addAgentModel = useThreadStore((s) => s.addAgentModel);
+  const appendAgentMessage = useThreadStore((s) => s.appendAgentMessage);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -420,8 +421,8 @@ export function useCodexNotifications() {
         }
 
         case "error": {
-          // Fatal turn error (willRetry: false) — reset in-progress state so
-          // the agent doesn't stay stuck in "active" indefinitely.
+          // Fatal turn error (willRetry: false) — reset in-progress state and
+          // surface the error message in the chat so the user understands what failed.
           const willRetry = params.willRetry;
           if (!willRetry) {
             const startedAt =
@@ -436,6 +437,12 @@ export function useCodexNotifications() {
             setAgentTurnInProgress(agentId, false);
             setAgentCurrentTurnId(agentId, null);
             setAgentStatus(agentId, "review");
+
+            const errorObj = params.error as Record<string, unknown> | undefined;
+            const errorMessage = typeof errorObj?.message === "string" ? errorObj.message.trim() : "";
+            if (errorMessage) {
+              appendAgentMessage(agentId, { role: "agent", content: errorMessage });
+            }
           }
           break;
         }
@@ -525,6 +532,7 @@ export function useCodexNotifications() {
     updateAgentUsage,
     updateAgentDiff,
     addAgentModel,
+    appendAgentMessage,
   ]);
 
   useEffect(() => {

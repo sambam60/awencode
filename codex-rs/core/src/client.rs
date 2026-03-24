@@ -113,6 +113,7 @@ pub const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 pub const X_CODEX_TURN_METADATA_HEADER: &str = "x-codex-turn-metadata";
 pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
     "x-responsesapi-include-timing-metrics";
+const OPENROUTER_PROVIDER_NAME: &str = "OpenRouter";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const RESPONSES_ENDPOINT: &str = "/responses";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
@@ -124,6 +125,25 @@ pub fn ws_version_from_features(config: &Config) -> bool {
         || config
             .features
             .enabled(crate::features::Feature::ResponsesWebsocketsV2)
+}
+
+fn is_openrouter_provider_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case(OPENROUTER_PROVIDER_NAME)
+}
+
+fn sanitize_openrouter_responses_tools(tools: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    tools
+        .into_iter()
+        .filter_map(|tool| {
+            let mut obj = tool.as_object()?.clone();
+            if obj.get("type").and_then(|value| value.as_str()) != Some("function") {
+                return None;
+            }
+            // OpenRouter's Responses API documents only OpenAI-style function tools.
+            obj.remove("defer_loading");
+            Some(serde_json::Value::Object(obj))
+        })
+        .collect()
 }
 
 /// Session-scoped state shared by all [`ModelClient`] clones.
@@ -346,8 +366,16 @@ impl ModelClient {
         let instructions = prompt.base_instructions.text.clone();
         let input = prompt.get_formatted_input();
         let tools = create_tools_json_for_responses_api(&prompt.tools)?;
-        let reasoning = Self::build_reasoning(model_info, effort, summary);
-        let verbosity = if model_info.support_verbosity {
+        let is_openrouter = is_openrouter_provider_name(self.state.provider.name.as_str());
+        let reasoning_summary = if is_openrouter {
+            ReasoningSummaryConfig::None
+        } else {
+            summary
+        };
+        let reasoning = Self::build_reasoning(model_info, effort, reasoning_summary);
+        let verbosity = if is_openrouter {
+            None
+        } else if model_info.support_verbosity {
             self.state.model_verbosity.or(model_info.default_verbosity)
         } else {
             if self.state.model_verbosity.is_some() {
@@ -657,15 +685,31 @@ impl ModelClientSession {
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
-        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let mut tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let is_openrouter = is_openrouter_provider_name(provider.name.as_str());
+        if is_openrouter {
+            let original_tool_count = tools.len();
+            tools = sanitize_openrouter_responses_tools(tools);
+            let dropped_tool_count = original_tool_count.saturating_sub(tools.len());
+            if dropped_tool_count > 0 {
+                warn!(
+                    "OpenRouter Responses API only supports function tools; dropped {dropped_tool_count} unsupported tool definitions"
+                );
+            }
+        }
         let default_reasoning_effort = model_info.default_reasoning_level;
+        let reasoning_summary = if is_openrouter {
+            ReasoningSummaryConfig::None
+        } else {
+            summary
+        };
         let reasoning = if model_info.supports_reasoning_summaries {
             Some(Reasoning {
                 effort: effort.or(default_reasoning_effort),
-                summary: if summary == ReasoningSummaryConfig::None {
+                summary: if reasoning_summary == ReasoningSummaryConfig::None {
                     None
                 } else {
-                    Some(summary)
+                    Some(reasoning_summary)
                 },
             })
         } else {
@@ -676,7 +720,9 @@ impl ModelClientSession {
         } else {
             Vec::new()
         };
-        let verbosity = if model_info.support_verbosity {
+        let verbosity = if is_openrouter {
+            None
+        } else if model_info.support_verbosity {
             self.client
                 .state
                 .model_verbosity
@@ -702,13 +748,21 @@ impl ModelClientSession {
             reasoning,
             store: provider.is_azure_responses_endpoint(),
             stream: true,
-            include,
-            service_tier: match service_tier {
-                Some(ServiceTier::Fast) => Some("priority".to_string()),
-                Some(service_tier) => Some(service_tier.to_string()),
-                None => None,
+            include: if is_openrouter { Vec::new() } else { include },
+            service_tier: if is_openrouter {
+                None
+            } else {
+                match service_tier {
+                    Some(ServiceTier::Fast) => Some("priority".to_string()),
+                    Some(service_tier) => Some(service_tier.to_string()),
+                    None => None,
+                }
             },
-            prompt_cache_key,
+            prompt_cache_key: if is_openrouter {
+                None
+            } else {
+                prompt_cache_key
+            },
             text,
         };
         Ok(request)
@@ -724,18 +778,39 @@ impl ModelClientSession {
         turn_metadata_header: Option<&str>,
         compression: Compression,
     ) -> ApiResponsesOptions {
+        let is_openrouter = is_openrouter_provider_name(self.client.state.provider.name.as_str());
         let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
         let conversation_id = self.client.state.conversation_id.to_string();
         ApiResponsesOptions {
             conversation_id: Some(conversation_id),
-            session_source: Some(self.client.state.session_source.clone()),
+            session_source: if is_openrouter {
+                None
+            } else {
+                Some(self.client.state.session_source.clone())
+            },
             extra_headers: build_responses_headers(
-                self.client.state.beta_features_header.as_deref(),
-                Some(&self.turn_state),
-                turn_metadata_header.as_ref(),
+                if is_openrouter {
+                    None
+                } else {
+                    self.client.state.beta_features_header.as_deref()
+                },
+                if is_openrouter {
+                    None
+                } else {
+                    Some(&self.turn_state)
+                },
+                if is_openrouter {
+                    None
+                } else {
+                    turn_metadata_header.as_ref()
+                },
             ),
             compression,
-            turn_state: Some(Arc::clone(&self.turn_state)),
+            turn_state: if is_openrouter {
+                None
+            } else {
+                Some(Arc::clone(&self.turn_state))
+            },
         }
     }
 

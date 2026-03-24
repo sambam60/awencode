@@ -26,6 +26,7 @@ import {
   buildAzureDeploymentModels,
   type ReasoningEffort,
 } from "@/lib/stores/settings-store";
+import { useThreadStore } from "@/lib/stores/thread-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 
 export interface Attachment {
@@ -194,15 +195,26 @@ export function ComposeArea({
   const modelAnchorRef = useRef<HTMLButtonElement>(null);
   const reasoningAnchorRef = useRef<HTMLButtonElement>(null);
 
-  const selectedModelId = useSettingsStore((s) => s.selectedModelId);
-  const selectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
+  const defaultSelectedModelId = useSettingsStore((s) => s.selectedModelId);
+  const defaultSelectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
   const azureDeployments = useSettingsStore((s) => s.azureDeployments);
   const enabledModels = useSettingsStore((s) => s.enabledModels);
-  const setSelectedModelId = useSettingsStore((s) => s.setSelectedModelId);
-  const setSelectedReasoningEffort = useSettingsStore((s) => s.setSelectedReasoningEffort);
+  const agentSelectedModelId = useThreadStore(
+    (s) => s.agents.find((a) => a.id === agentId)?.selectedModelId ?? null,
+  );
+  const agentSelectedReasoningEffort = useThreadStore(
+    (s) => s.agents.find((a) => a.id === agentId)?.selectedReasoningEffort ?? null,
+  );
+  const setAgentSelectedModelId = useThreadStore((s) => s.setAgentSelectedModelId);
+  const setAgentSelectedReasoningEffort = useThreadStore(
+    (s) => s.setAgentSelectedReasoningEffort,
+  );
   const isDark = useIsDarkMode();
 
   const modelOptions = [...CURATED_MODELS, ...buildAzureDeploymentModels(azureDeployments)];
+  const selectedModelId = agentSelectedModelId ?? defaultSelectedModelId;
+  const selectedReasoningEffort =
+    agentSelectedReasoningEffort ?? defaultSelectedReasoningEffort;
 
   const enabledModelList = modelOptions.filter((m) => enabledModels[m.id]);
   const selectedModel =
@@ -634,7 +646,7 @@ export function ComposeArea({
                       : "text-text-secondary",
                   )}
                   onClick={() => {
-                    setSelectedModelId(m.id);
+                    setAgentSelectedModelId(agentId, m.id);
                     setModelOpen(false);
                   }}
                 >
@@ -677,7 +689,7 @@ export function ComposeArea({
                       : "text-text-secondary",
                   )}
                   onClick={() => {
-                    setSelectedReasoningEffort(c.id);
+                    setAgentSelectedReasoningEffort(agentId, c.id);
                     setReasoningOpen(false);
                   }}
                 >
