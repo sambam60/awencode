@@ -15,6 +15,7 @@ const LINEAR_GRAPHQL_URL: &str = "https://api.linear.app/graphql";
 const LINEAR_AUTHORIZE_URL: &str = "https://linear.app/oauth/authorize";
 const LINEAR_TOKEN_URL: &str = "https://api.linear.app/oauth/token";
 const LINEAR_SCOPE: &str = "read,write,issues:create";
+const DEFAULT_LINEAR_REDIRECT_URI: &str = "http://localhost:45671/callback";
 
 static LINEAR_OAUTH_SESSIONS: OnceLock<Mutex<HashMap<String, LinearOauthSession>>> =
     OnceLock::new();
@@ -132,14 +133,10 @@ pub async fn linear_oauth_start() -> Result<LinearOauthStartResult, String> {
     let state = random_token(32);
     let code_verifier = random_token(64);
     let code_challenge = code_challenge(&code_verifier);
-    let listener = TcpListener::bind("127.0.0.1:0")
+    let redirect_uri = linear_redirect_uri()?;
+    let listener = TcpListener::bind(linear_callback_bind_addr(&redirect_uri)?)
         .await
         .map_err(|err| format!("Failed to start local callback server: {err}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|err| format!("Failed to read callback port: {err}"))?
-        .port();
-    let redirect_uri = format!("http://localhost:{port}/callback");
 
     sessions().lock().await.insert(
         request_id.clone(),
@@ -532,6 +529,57 @@ fn linear_client_id() -> Result<&'static str, String> {
                 .to_string(),
         )
     }
+}
+
+fn linear_redirect_uri() -> Result<String, String> {
+    if let Some(redirect_uri) = optional_env_var("AWENCODE_LINEAR_REDIRECT_URI") {
+        validate_linear_redirect_uri(&redirect_uri)?;
+        return Ok(redirect_uri);
+    }
+    if let Some(redirect_uri) = option_env!("AWENCODE_LINEAR_REDIRECT_URI") {
+        let trimmed = redirect_uri.trim();
+        if !trimmed.is_empty() {
+            validate_linear_redirect_uri(trimmed)?;
+            return Ok(trimmed.to_string());
+        }
+    }
+    Ok(DEFAULT_LINEAR_REDIRECT_URI.to_string())
+}
+
+fn linear_callback_bind_addr(redirect_uri: &str) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(redirect_uri)
+        .map_err(|err| format!("Invalid Linear redirect URI: {err}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Linear redirect URI must include a host.".to_string())?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "Linear redirect URI must include a valid port.".to_string())?;
+    match host {
+        "localhost" | "127.0.0.1" => Ok(format!("127.0.0.1:{port}")),
+        _ => Err("Linear redirect URI must use localhost or 127.0.0.1.".to_string()),
+    }
+}
+
+fn validate_linear_redirect_uri(redirect_uri: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(redirect_uri)
+        .map_err(|err| format!("Invalid Linear redirect URI: {err}"))?;
+    if parsed.scheme() != "http" {
+        return Err("Linear redirect URI must use http.".to_string());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Linear redirect URI must include a host.".to_string())?;
+    if !matches!(host, "localhost" | "127.0.0.1") {
+        return Err("Linear redirect URI must use localhost or 127.0.0.1.".to_string());
+    }
+    if parsed.port_or_known_default().is_none() {
+        return Err("Linear redirect URI must include a port.".to_string());
+    }
+    if parsed.path().is_empty() || parsed.path() == "/" {
+        return Err("Linear redirect URI must include a callback path.".to_string());
+    }
+    Ok(())
 }
 
 fn random_token(length: usize) -> String {

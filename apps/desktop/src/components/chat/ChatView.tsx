@@ -60,6 +60,7 @@ import {
 } from "@/lib/stores/thread-store";
 import { FileTreeView } from "./FileTreeView";
 import { DiffActivityView } from "./DiffActivityView";
+import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import {
   getAgentContextPercent,
   getAgentDiffStats,
@@ -1460,21 +1461,26 @@ function DiffButton({ files }: { files: string[] }) {
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        type="button"
+        onClick={() => fileCount > 0 && setOpen((v) => !v)}
+        title={fileCount > 0 ? "Changed files" : "No changed files"}
         className={cn(
-          "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-mono transition-colors duration-120 cursor-pointer",
+          "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] transition-colors duration-120",
           fileCount > 0
-            ? "border-border-default text-text-secondary bg-bg-secondary hover:bg-bg-card"
+            ? "border-border-default text-text-secondary bg-bg-secondary hover:bg-bg-card cursor-pointer"
             : "border-border-light text-text-faint bg-bg-secondary cursor-default",
         )}
         disabled={fileCount === 0}
       >
         <FileDiff size={12} strokeWidth={1.75} className="shrink-0" />
-        {fileCount > 0 && (
-          <span className="font-mono text-[9.5px] text-text-faint bg-bg-primary border border-border-light rounded px-1 py-0.5 leading-none">
-            {fileCount}
-          </span>
-        )}
+        <span
+          className={cn(
+            "font-sans leading-none tabular-nums",
+            fileCount > 0 ? "text-text-secondary" : "text-text-faint",
+          )}
+        >
+          {fileCount}
+        </span>
       </button>
       {open && fileCount > 0 && (
         <div className="absolute right-0 top-full mt-1.5 w-64 rounded-lg glass-overlay z-50 overflow-hidden">
@@ -1584,12 +1590,31 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       });
   }, [agent.id, agent.branch, projectPath, updateAgentPrStatus]);
 
+  const enqueueMessage = useChatUiStore((s) => s.enqueueMessage);
+
   const handleSend = useCallback(
     async (message: string, attachments: Attachment[]) => {
+      const current = useThreadStore.getState().agents.find((a) => a.id === agent.id);
+      if (current?.turnInProgress && attachments.length === 0) {
+        enqueueMessage(agent.id, message);
+        return;
+      }
       await sendChatTurn(agent.id, message, attachments);
     },
-    [agent.id],
+    [agent.id, enqueueMessage],
   );
+
+  const prevTurnInProgressRef = useRef(agent.turnInProgress);
+  useEffect(() => {
+    const wasBusy = prevTurnInProgressRef.current;
+    prevTurnInProgressRef.current = agent.turnInProgress;
+    if (wasBusy && !agent.turnInProgress) {
+      const next = useChatUiStore.getState().dequeueMessage(agent.id);
+      if (next) {
+        sendChatTurn(agent.id, next.text, []);
+      }
+    }
+  }, [agent.turnInProgress, agent.id]);
 
   const [stopping, setStopping] = useState(false);
   const [promptEdit, setPromptEdit] = useState<{
@@ -2024,11 +2049,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             icon={<ContextUsageIcon percent={tokenPercent} />}
             value={tokenLabel}
           />
-          <div className="h-3 w-px bg-border-light" />
-          <HeaderMetaItem
-            icon={<FileDiff size={12} strokeWidth={1.75} />}
-            value={`${agent.files.length}`}
-          />
           {hasPlan && agent.status !== "queued" && (
             <>
               <div className="h-3 w-px bg-border-light" />
@@ -2417,20 +2437,23 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           </div>
         )}
 
-        {/* Compose — dock hidden while editing in-thread (inline compose replaces bubble) */}
+        {/* Queued messages + compose */}
         {canCompose && !promptEdit ? (
-          <ComposeArea
-            key={`${agent.id}-${composeSessionKey}`}
-            agentId={agent.id}
-            persistQueuedDraft={agent.status === "queued"}
-            onSend={handleSend}
-            emptyThread={
-              agent.messages.length === 0 && !agent.streamingBuffer
-            }
-            isRunning={isRunning}
-            onStop={handleStop}
-            stopping={stopping}
-          />
+          <>
+            <QueuedMessagesPanel agentId={agent.id} />
+            <ComposeArea
+              key={`${agent.id}-${composeSessionKey}`}
+              agentId={agent.id}
+              persistQueuedDraft={agent.status === "queued"}
+              onSend={handleSend}
+              emptyThread={
+                agent.messages.length === 0 && !agent.streamingBuffer
+              }
+              isRunning={isRunning}
+              onStop={handleStop}
+              stopping={stopping}
+            />
+          </>
         ) : null}
         {!canCompose ? (
           <div className="border border-border-light rounded-lg px-4 py-3 text-center">
