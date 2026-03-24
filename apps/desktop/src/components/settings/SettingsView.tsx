@@ -20,7 +20,6 @@ import {
   Copy,
   ExternalLink,
   GitBranch,
-  GitPullRequest,
   Layers,
   Laptop,
   Loader2,
@@ -512,6 +511,39 @@ function IntegrationCard({
       <div className="px-4 py-4">{children}</div>
     </div>
   );
+}
+
+function IntegrationBrandIcon({
+  src,
+  alt,
+  invertMode = "dark",
+  cropWordmark = false,
+}: {
+  src: string;
+  alt: string;
+  invertMode?: "dark" | "light";
+  cropWordmark?: boolean;
+}) {
+  const image = (
+    <img
+      src={src}
+      alt={alt}
+      className={cn(
+        "h-4 w-auto shrink-0 max-w-none opacity-40",
+        invertMode === "dark" ? "dark:invert" : "invert dark:invert-0",
+      )}
+    />
+  );
+
+  if (cropWordmark) {
+    return (
+      <div className="h-4 w-4 overflow-hidden shrink-0" aria-hidden>
+        {image}
+      </div>
+    );
+  }
+
+  return image;
 }
 
 function IntegrationActionButton({
@@ -1429,7 +1461,7 @@ function IntegrationsSection() {
         <IntegrationCard
           title="GitHub"
           description="Use GitHub OAuth for pull request checks, approvals, comments, and merge status."
-          icon={<GitPullRequest className="h-4 w-4" strokeWidth={1.75} />}
+          icon={<IntegrationBrandIcon src="/octicon.svg" alt="GitHub" />}
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -1508,7 +1540,14 @@ function IntegrationsSection() {
         <IntegrationCard
           title="Linear"
           description="Use Linear OAuth to link threads to issues and prepare Linear issue workflows."
-          icon={<Layers className="h-4 w-4" strokeWidth={1.75} />}
+          icon={
+            <IntegrationBrandIcon
+              src="/linear_wordmark.svg"
+              alt="Linear"
+              invertMode="light"
+              cropWordmark
+            />
+          }
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -1545,7 +1584,7 @@ function IntegrationsSection() {
         <IntegrationCard
           title="ChatGPT"
           description="Use your ChatGPT account for managed OpenAI authentication. API keys remain in General."
-          icon={<Bot className="h-4 w-4" strokeWidth={1.75} />}
+          icon={<IntegrationBrandIcon src="/ChatGPT Logo.svg" alt="ChatGPT" />}
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
