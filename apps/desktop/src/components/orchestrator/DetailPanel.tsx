@@ -32,6 +32,18 @@ import { getModelDisplayName } from "@/lib/stores/settings-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import type { Agent, AgentActivity, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
+/** Tauri `invoke` often rejects with a plain string from Rust; avoid losing the message. */
+function extractInvokeErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (typeof error === "string" && error.trim()) return error.trim();
+  try {
+    const s = JSON.stringify(error);
+    return s !== "{}" ? s : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 interface DetailPanelProps {
   agent: Agent;
   onClose: () => void;
@@ -758,7 +770,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       removeAgent(agent.id);
       onClose();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Archive failed");
+      setActionError(extractInvokeErrorMessage(e, "Archive failed"));
     } finally {
       setActionBusy(null);
     }
@@ -774,7 +786,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       removeAgent(agent.id);
       onClose();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Remove failed");
+      setActionError(extractInvokeErrorMessage(e, "Remove failed"));
     } finally {
       setActionBusy(null);
     }

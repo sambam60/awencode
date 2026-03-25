@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_shell::ShellExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
@@ -45,7 +46,15 @@ fn codex_app_server_candidates() -> Vec<PathBuf> {
     ]
 }
 
-fn resolve_codex_app_server_binary() -> Result<PathBuf, String> {
+/// Path next to the running executable (same rules as `tauri_plugin_shell` sidecars).
+fn try_sidecar_codex_app_server(app: &AppHandle) -> Option<PathBuf> {
+    let shell_cmd = app.shell().sidecar("codex-app-server").ok()?;
+    let std_cmd: std::process::Command = shell_cmd.into();
+    let path = PathBuf::from(std_cmd.get_program());
+    path.is_file().then_some(path)
+}
+
+fn resolve_codex_app_server_binary(app: &AppHandle) -> Result<PathBuf, String> {
     if let Some(override_path) = optional_env_var("AWENCODE_CODEX_APP_SERVER_PATH") {
         let path = PathBuf::from(&override_path);
         if path.is_file() {
@@ -56,6 +65,10 @@ fn resolve_codex_app_server_binary() -> Result<PathBuf, String> {
         ));
     }
 
+    if let Some(path) = try_sidecar_codex_app_server(app) {
+        return Ok(path);
+    }
+
     for candidate in codex_app_server_candidates() {
         if candidate.is_file() {
             return Ok(candidate);
@@ -64,7 +77,7 @@ fn resolve_codex_app_server_binary() -> Result<PathBuf, String> {
 
     which::which("codex-app-server").map_err(|e| {
         format!(
-            "codex-app-server binary not found in PATH: {e}. Build codex-rs (app-server) first."
+            "codex-app-server binary not found (bundled sidecar, target/debug copy, workspace build, or PATH): {e}"
         )
     })
 }
@@ -155,7 +168,7 @@ impl CodexBridge {
     }
 
     pub async fn start(&mut self, app_handle: &AppHandle) -> Result<(), String> {
-        let codex_bin = resolve_codex_app_server_binary()?;
+        let codex_bin = resolve_codex_app_server_binary(app_handle)?;
 
         let codex_home = awencode_codex_home()
             .map_err(|e| format!("Failed to create Awencode data directory: {e}"))?;

@@ -7,6 +7,10 @@ node_modules
 # Keep pnpm-lock.yaml
 !pnpm-lock.yaml
 
+# Awencode desktop: staged codex-app-server for Tauri externalBin (pnpm run prepare:codex-app-server; CI cache)
+apps/desktop/src-tauri/binaries/*
+!apps/desktop/src-tauri/binaries/.gitkeep
+
 # build
 dist/
 bazel-*
