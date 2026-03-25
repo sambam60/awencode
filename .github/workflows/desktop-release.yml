@@ -82,6 +82,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Tauri icons
+        shell: bash
+        run: |
+          if [ ! -f "apps/desktop/src-tauri/icons/32x32.png" ]; then
+            pnpm --filter @awencode/desktop tauri icon "public/awencode_icons-iOS-Default-256x256@1x.png"
+          fi
+
       - name: Validate macOS signing and notarization secrets
         if: startsWith(matrix.platform, 'macos-')
         env:
