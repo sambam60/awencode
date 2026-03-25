@@ -110,15 +110,42 @@ jobs:
             fi
           done
 
-          if [ -n "$APPLE_ID" ] || [ -n "$APPLE_PASSWORD" ] || [ -n "$APPLE_TEAM_ID" ]; then
-            for var_name in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-              if [ -z "${!var_name}" ]; then
-                missing+=("$var_name")
-              fi
-            done
-          else
-            if [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_PRIVATE_KEY" ]; then
-              missing+=("APPLE_ID/APPLE_PASSWORD or APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_PRIVATE_KEY")
+          apple_id_vars=(APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          api_key_vars=(APPLE_API_KEY APPLE_API_ISSUER APPLE_API_PRIVATE_KEY)
+          apple_id_present=0
+          api_key_present=0
+
+          for var_name in "${apple_id_vars[@]}"; do
+            if [ -n "${!var_name}" ]; then
+              apple_id_present=$((apple_id_present + 1))
+            fi
+          done
+
+          for var_name in "${api_key_vars[@]}"; do
+            if [ -n "${!var_name}" ]; then
+              api_key_present=$((api_key_present + 1))
+            fi
+          done
+
+          if [ "$apple_id_present" -ne 3 ] && [ "$api_key_present" -ne 3 ]; then
+            if [ "$apple_id_present" -gt 0 ]; then
+              for var_name in "${apple_id_vars[@]}"; do
+                if [ -z "${!var_name}" ]; then
+                  missing+=("$var_name")
+                fi
+              done
+            fi
+
+            if [ "$api_key_present" -gt 0 ]; then
+              for var_name in "${api_key_vars[@]}"; do
+                if [ -z "${!var_name}" ]; then
+                  missing+=("$var_name")
+                fi
+              done
+            fi
+
+            if [ "$apple_id_present" -eq 0 ] && [ "$api_key_present" -eq 0 ]; then
+              missing+=("APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID or APPLE_API_KEY/APPLE_API_ISSUER/APPLE_API_PRIVATE_KEY")
             fi
           fi
 
