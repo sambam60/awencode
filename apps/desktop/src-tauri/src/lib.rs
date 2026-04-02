@@ -1022,6 +1022,150 @@ async fn get_git_file_status(path: String) -> Result<Vec<FileStatusEntry>, Strin
         .collect())
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GitDiffFileEntry {
+    path: String,
+    additions: usize,
+    deletions: usize,
+    staged: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitDiffResult {
+    diff: String,
+    file_count: usize,
+    additions: usize,
+    deletions: usize,
+    files: Vec<GitDiffFileEntry>,
+}
+
+#[tauri::command]
+async fn get_git_diff(path: String, branch: Option<String>) -> Result<GitDiffResult, String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() {
+        return Err("Not a directory".to_string());
+    }
+    let status = read_git_status(&path).await?;
+    let staged_paths: std::collections::HashSet<String> = status
+        .entries
+        .iter()
+        .filter(|e| is_staged_git_status(e.index_status))
+        .map(|e| e.path.clone())
+        .collect();
+
+    let path_clone = path.clone();
+    tokio::task::spawn_blocking(move || {
+        let base = branch.unwrap_or_else(|| "HEAD".to_string());
+        let output = std::process::Command::new("git")
+            .args(["diff", &base])
+            .current_dir(&path_clone)
+            .output()
+            .map_err(|e| format!("Failed to run git diff: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git diff failed: {stderr}"));
+        }
+        let diff = String::from_utf8_lossy(&output.stdout).to_string();
+        let mut total_additions = 0usize;
+        let mut total_deletions = 0usize;
+        let mut files: Vec<GitDiffFileEntry> = Vec::new();
+        let mut current_path = String::new();
+        let mut file_adds = 0usize;
+        let mut file_dels = 0usize;
+
+        for line in diff.lines() {
+            if line.starts_with("diff --git ") {
+                if !current_path.is_empty() {
+                    files.push(GitDiffFileEntry {
+                        staged: staged_paths.contains(&current_path),
+                        path: current_path,
+                        additions: file_adds,
+                        deletions: file_dels,
+                    });
+                }
+                let path_match = line
+                    .strip_prefix("diff --git a/")
+                    .and_then(|rest| rest.split_once(" b/"))
+                    .map(|(a, b)| if b == "/dev/null" { a } else { b });
+                current_path = path_match.unwrap_or("unknown").to_string();
+                file_adds = 0;
+                file_dels = 0;
+            } else if line.starts_with('+') && !line.starts_with("+++") {
+                file_adds += 1;
+                total_additions += 1;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                file_dels += 1;
+                total_deletions += 1;
+            }
+        }
+        if !current_path.is_empty() {
+            files.push(GitDiffFileEntry {
+                staged: staged_paths.contains(&current_path),
+                path: current_path,
+                additions: file_adds,
+                deletions: file_dels,
+            });
+        }
+        let file_count = files.len();
+        Ok(GitDiffResult { diff, file_count, additions: total_additions, deletions: total_deletions, files })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_stage_files(path: String, files: Vec<String>) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() { return Err("Not a directory".to_string()); }
+    if files.is_empty() { return Ok(()); }
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec!["add".to_string(), "--".to_string()];
+        args.extend(files);
+        let output = std::process::Command::new("git").args(&args).current_dir(&path).output()
+            .map_err(|e| format!("Failed to run git add: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("git add failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_unstage_files(path: String, files: Vec<String>) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() { return Err("Not a directory".to_string()); }
+    if files.is_empty() { return Ok(()); }
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec!["restore".to_string(), "--staged".to_string(), "--".to_string()];
+        args.extend(files);
+        let output = std::process::Command::new("git").args(&args).current_dir(&path).output()
+            .map_err(|e| format!("Failed to run git restore --staged: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("git unstage failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn git_discard_files(path: String, files: Vec<String>) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.is_dir() { return Err("Not a directory".to_string()); }
+    if files.is_empty() { return Ok(()); }
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec!["checkout".to_string(), "HEAD".to_string(), "--".to_string()];
+        args.extend(files);
+        let output = std::process::Command::new("git").args(&args).current_dir(&path).output()
+            .map_err(|e| format!("Failed to run git checkout: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("git discard failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitThreadActionState {
@@ -1387,6 +1531,10 @@ pub fn run() {
             get_git_info,
             get_branch_pr,
             get_git_file_status,
+            get_git_diff,
+            git_stage_files,
+            git_unstage_files,
+            git_discard_files,
             get_git_thread_action_state,
             path_is_directory,
             list_directory_tree,

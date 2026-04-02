@@ -8,12 +8,15 @@ export interface QueuedMessage {
 interface ChatUiState {
   /** Per-thread file explorer open preference (chat view). */
   fileTreeOpenByAgentId: Record<string, boolean>;
+  /** Per-thread diff panel open preference (chat view). */
+  diffPanelOpenByAgentId: Record<string, boolean>;
   /** Prompt draft for queued threads (persisted per project). */
   composeDraftByAgentId: Record<string, string>;
   /** Messages queued while a turn is in progress, keyed by agent id. */
   queuedMessagesByAgentId: Record<string, QueuedMessage[]>;
   setAgentFileTreeOpen: (agentId: string, open: boolean) => void;
   setAllFileTreePrefs: (prefs: Record<string, boolean>) => void;
+  setAgentDiffPanelOpen: (agentId: string, open: boolean) => void;
   setComposeDraft: (agentId: string, text: string) => void;
   setAllComposeDrafts: (drafts: Record<string, string>) => void;
   enqueueMessage: (agentId: string, text: string) => void;
@@ -29,6 +32,7 @@ let queueIdCounter = 0;
 
 export const useChatUiStore = create<ChatUiState>((set, get) => ({
   fileTreeOpenByAgentId: {},
+  diffPanelOpenByAgentId: {},
   composeDraftByAgentId: {},
   queuedMessagesByAgentId: {},
   setAgentFileTreeOpen: (agentId, open) =>
@@ -36,6 +40,10 @@ export const useChatUiStore = create<ChatUiState>((set, get) => ({
       fileTreeOpenByAgentId: { ...s.fileTreeOpenByAgentId, [agentId]: open },
     })),
   setAllFileTreePrefs: (fileTreeOpenByAgentId) => set({ fileTreeOpenByAgentId }),
+  setAgentDiffPanelOpen: (agentId, open) =>
+    set((s) => ({
+      diffPanelOpenByAgentId: { ...s.diffPanelOpenByAgentId, [agentId]: open },
+    })),
   setComposeDraft: (agentId, text) =>
     set((s) => {
       const next = { ...s.composeDraftByAgentId };
@@ -121,6 +129,7 @@ export const useChatUiStore = create<ChatUiState>((set, get) => ({
   reset: () =>
     set({
       fileTreeOpenByAgentId: {},
+      diffPanelOpenByAgentId: {},
       composeDraftByAgentId: {},
       queuedMessagesByAgentId: {},
     }),

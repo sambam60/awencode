@@ -384,54 +384,6 @@
   animation: cursor-blink 0.9s step-end infinite;
 }
 
-/* ─── Inline diff view ────────────────────────────────────────────────────── */
-
-.diff-line {
-  color: #b8bbc0;
-}
-
-.diff-line .diff-gutter {
-  color: #5f5f67;
-}
-
-.diff-line .diff-prefix {
-  color: #6b6f76;
-}
-
-.diff-line-add {
-  background: rgba(74, 173, 110, 0.08);
-}
-
-.diff-line-add .diff-gutter {
-  color: rgba(74, 173, 110, 0.5);
-  background: rgba(74, 173, 110, 0.04);
-}
-
-.diff-line-add .diff-prefix {
-  color: #4aad6e;
-}
-
-.diff-line-add td:last-child {
-  color: #b5e0c5;
-}
-
-.diff-line-del {
-  background: rgba(212, 82, 74, 0.08);
-}
-
-.diff-line-del .diff-gutter {
-  color: rgba(212, 82, 74, 0.5);
-  background: rgba(212, 82, 74, 0.04);
-}
-
-.diff-line-del .diff-prefix {
-  color: #d4524a;
-}
-
-.diff-line-del td:last-child {
-  color: #e0a8a4;
-}
-
 .hide-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;

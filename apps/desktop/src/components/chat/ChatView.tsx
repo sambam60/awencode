@@ -61,7 +61,7 @@ import {
 } from "@/lib/stores/thread-store";
 import type { LinearIssue } from "@/lib/linear";
 import { FileTreeView } from "./FileTreeView";
-import { DiffActivityView } from "./DiffActivityView";
+import { DiffPanel } from "./DiffPanel";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import {
   getAgentContextPercent,
@@ -710,6 +710,9 @@ const DURATION_MS = 1000;
 const FILE_TREE_DEFAULT_WIDTH_PX = 244;
 const FILE_TREE_MIN_WIDTH_PX = 216;
 const FILE_TREE_MAX_WIDTH_PX = 360;
+const DIFF_PANEL_DEFAULT_WIDTH_PX = 340;
+const DIFF_PANEL_MIN_WIDTH_PX = 280;
+const DIFF_PANEL_MAX_WIDTH_PX = 600;
 
 function activityDurationSeconds(activity: AgentActivity): number | undefined {
   if (activity.status === "running" || activity.durationMs == null) {
@@ -1518,57 +1521,32 @@ function OpenInButton({ linkedLinearIssues }: { linkedLinearIssues?: LinearIssue
 
 // ─── Diff button ──────────────────────────────────────────────────────────────
 
-function DiffButton({ files }: { files: string[] }) {
-  const [open, setOpen] = useState(false);
-  const fileCount = files.length;
+function DiffButton({ fileCount, active, onClick }: { fileCount: number; active: boolean; onClick: () => void }) {
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => fileCount > 0 && setOpen((v) => !v)}
-        title={fileCount > 0 ? "Changed files" : "No changed files"}
-        className={cn(
-          "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] transition-colors duration-120",
-          fileCount > 0
+    <button
+      type="button"
+      onClick={() => fileCount > 0 && onClick()}
+      title={fileCount > 0 ? "Toggle diff panel" : "No changed files"}
+      className={cn(
+        "flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] transition-colors duration-120",
+        active
+          ? "border-border-focus text-text-primary bg-bg-card cursor-pointer"
+          : fileCount > 0
             ? "border-border-default text-text-secondary bg-bg-secondary hover:bg-bg-card cursor-pointer"
             : "border-border-light text-text-faint bg-bg-secondary cursor-default",
+      )}
+      disabled={fileCount === 0}
+    >
+      <FileDiff size={12} strokeWidth={1.75} className="shrink-0" />
+      <span
+        className={cn(
+          "font-sans leading-none tabular-nums",
+          active ? "text-text-primary" : fileCount > 0 ? "text-text-secondary" : "text-text-faint",
         )}
-        disabled={fileCount === 0}
       >
-        <FileDiff size={12} strokeWidth={1.75} className="shrink-0" />
-        <span
-          className={cn(
-            "font-sans leading-none tabular-nums",
-            fileCount > 0 ? "text-text-secondary" : "text-text-faint",
-          )}
-        >
-          {fileCount}
-        </span>
-      </button>
-      {open && fileCount > 0 && (
-        <div className="absolute right-0 top-full mt-1.5 w-64 rounded-lg glass-overlay z-50 overflow-hidden">
-          <div className="px-3 py-2 border-b border-border-light">
-            <span className="font-mono text-[9.5px] text-text-faint uppercase tracking-widest">
-              Changed Files
-            </span>
-          </div>
-          <div className="max-h-64 overflow-y-auto">
-            {files.map((file) => (
-              <div
-                key={file}
-                className="px-3 py-2 font-mono text-[11px] text-text-secondary border-b border-border-light last:border-b-0 truncate"
-                title={file}
-              >
-                {file}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {open && fileCount > 0 && (
-        <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-      )}
-    </div>
+        {fileCount}
+      </span>
+    </button>
   );
 }
 
@@ -1716,6 +1694,39 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const [fileTreeWidth, setFileTreeWidth] = useState(FILE_TREE_DEFAULT_WIDTH_PX);
   const [isResizingFileTree, setIsResizingFileTree] = useState(false);
 
+  const diffPanelOpen = useChatUiStore(
+    (s) => s.diffPanelOpenByAgentId[agent.id] ?? false,
+  );
+  const setAgentDiffPanelOpen = useChatUiStore((s) => s.setAgentDiffPanelOpen);
+  const [diffPanelMounted, setDiffPanelMounted] = useState(() => diffPanelOpen);
+  const [diffPanelWidth, setDiffPanelWidth] = useState(DIFF_PANEL_DEFAULT_WIDTH_PX);
+  const [isResizingDiffPanel, setIsResizingDiffPanel] = useState(false);
+
+  interface GitDiffFile { path: string; additions: number; deletions: number; staged: boolean }
+  interface GitDiffData { diff: string; fileCount: number; additions: number; deletions: number; files: GitDiffFile[] }
+  const [gitDiff, setGitDiff] = useState<GitDiffData | null>(null);
+  const [gitDiffVersion, setGitDiffVersion] = useState(0);
+
+  const refreshGitDiff = useCallback(() => {
+    setGitDiffVersion((v) => v + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    let cancelled = false;
+    const fetchDiff = () => {
+      invoke<GitDiffData>(
+        "get_git_diff",
+        { path: projectPath, branch: agent.branch ? `origin/${agent.branch}` : null },
+      )
+        .then((result) => { if (!cancelled) setGitDiff(result); })
+        .catch(() => { if (!cancelled) setGitDiff(null); });
+    };
+    fetchDiff();
+    const interval = setInterval(fetchDiff, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [projectPath, agent.branch, agent.status, agent.turnInProgress, gitDiffVersion]);
+
   useEffect(() => {
     if (fileTreeOpen) {
       setFileTreeMounted(true);
@@ -1725,9 +1736,22 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     return () => window.clearTimeout(t);
   }, [fileTreeOpen]);
 
+  useEffect(() => {
+    if (diffPanelOpen) {
+      setDiffPanelMounted(true);
+      return;
+    }
+    const t = window.setTimeout(() => setDiffPanelMounted(false), 200);
+    return () => window.clearTimeout(t);
+  }, [diffPanelOpen]);
+
   const toggleFileTree = useCallback(() => {
     setAgentFileTreeOpen(agent.id, !fileTreeOpen);
   }, [agent.id, fileTreeOpen, setAgentFileTreeOpen]);
+
+  const toggleDiffPanel = useCallback(() => {
+    setAgentDiffPanelOpen(agent.id, !diffPanelOpen);
+  }, [agent.id, diffPanelOpen, setAgentDiffPanelOpen]);
 
   const handleFileTreeResizeStart = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1768,6 +1792,36 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       window.addEventListener("pointercancel", stopResizing);
     },
     [fileTreeOpen, fileTreeWidth],
+  );
+
+  const handleDiffPanelResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!diffPanelOpen) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = diffPanelWidth;
+      const prevCursor = document.body.style.cursor;
+      const prevUserSelect = document.body.style.userSelect;
+      setIsResizingDiffPanel(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const onMove = (e: PointerEvent) => {
+        const next = Math.min(DIFF_PANEL_MAX_WIDTH_PX, Math.max(DIFF_PANEL_MIN_WIDTH_PX, startWidth - (e.clientX - startX)));
+        setDiffPanelWidth(next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        document.body.style.cursor = prevCursor;
+        document.body.style.userSelect = prevUserSelect;
+        setIsResizingDiffPanel(false);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [diffPanelOpen, diffPanelWidth],
   );
 
   const handleStop = useCallback(async () => {
@@ -2166,7 +2220,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           >
             <FolderTree size={12} />
           </button>
-          <DiffButton files={agent.files} />
+          <DiffButton fileCount={gitDiff?.fileCount ?? 0} active={diffPanelOpen} onClick={toggleDiffPanel} />
           <OpenInButton linkedLinearIssues={agent.linkedLinearIssues} />
           <GitButton
             pr={agent.pr}
@@ -2184,7 +2238,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
         className="flex flex-col flex-1 min-h-0 overflow-hidden relative"
         style={{
           paddingLeft: fileTreeOpen ? fileTreeWidth : 0,
-          transition: "padding-left 200ms ease-out",
+          paddingRight: diffPanelOpen ? diffPanelWidth : 0,
+          transition: "padding-left 200ms ease-out, padding-right 200ms ease-out",
         }}
       >
         {/* File tree overlay (no layout shift) */}
@@ -2258,6 +2313,78 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           </button>
         )}
 
+        {/* Diff panel — right sidebar */}
+        <div
+          className={cn(
+            "absolute right-0 top-0 bottom-0 z-40 transition-transform duration-200 ease-out",
+            diffPanelOpen ? "translate-x-0" : "translate-x-full",
+          )}
+          aria-hidden={!diffPanelMounted}
+          style={{ width: diffPanelWidth }}
+        >
+          {diffPanelMounted && (
+            <DiffPanel
+              diff={gitDiff?.diff ?? ""}
+              files={gitDiff?.files ?? []}
+              projectPath={projectPath}
+              width={diffPanelWidth}
+              open={diffPanelMounted}
+              onRefresh={refreshGitDiff}
+            />
+          )}
+        </div>
+
+        {/* Diff panel resize handle */}
+        {diffPanelOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize diff panel"
+            onPointerDown={handleDiffPanelResizeStart}
+            className="absolute top-0 bottom-0 z-50 w-5 translate-x-1/2 cursor-col-resize touch-none group/diff-resizer"
+            style={{ right: diffPanelWidth }}
+          >
+            <div
+              className={cn(
+                "absolute inset-y-0 left-1/2 -translate-x-1/2 w-px transition-colors duration-120",
+                isResizingDiffPanel
+                  ? "bg-border-focus"
+                  : "bg-border-default group-hover/diff-resizer:bg-border-focus",
+              )}
+              style={isResizingDiffPanel ? undefined : { opacity: 0.85 }}
+            />
+          </div>
+        )}
+
+        {/* Diff panel stash arrow */}
+        {diffPanelOpen && (
+          <button
+            type="button"
+            onClick={toggleDiffPanel}
+            className="absolute top-1/2 z-50 -translate-y-1/2 p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-secondary/80 transition-colors duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-blue focus-visible:outline-offset-2"
+            style={{ right: diffPanelWidth + 6 }}
+            title="Hide diff panel"
+          >
+            <ChevronRight size={15} strokeWidth={2} className="shrink-0" />
+          </button>
+        )}
+
+        {/* Edge toggle — right: open diff panel on hover */}
+        {!diffPanelOpen && !diffPanelMounted && (gitDiff?.fileCount ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={toggleDiffPanel}
+            className="absolute right-0 top-0 bottom-0 z-30 w-6 hover:w-8 flex items-center justify-start pl-1 bg-transparent hover:bg-bg-secondary/80 border-l border-border-light hover:border-border-default transition-all duration-150 cursor-pointer group/edge-diff"
+            title="Open diff panel"
+          >
+            <ChevronLeft
+              size={15}
+              strokeWidth={2}
+              className="text-text-faint opacity-0 group-hover/edge-diff:opacity-100 transition-opacity duration-100 shrink-0"
+            />
+          </button>
+        )}
+
         {/* Chat column */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
@@ -2267,7 +2394,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
           <div
             className={cn(
               "max-w-[680px] mx-auto pt-16 pb-28 transition-[padding] duration-150",
-              fileTreeOpen ? "px-4" : "px-6",
+              (fileTreeOpen || diffPanelOpen) ? "px-4" : "px-6",
             )}
           >
           {agent.messages.length === 0 && !agent.streamingBuffer ? (
@@ -2315,9 +2442,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                   {(agent.activities?.length ?? 0) > 0 && (
                     <ActivityFeed activities={agent.activities ?? []} />
                   )}
-                  {agent.diff && agent.turnInProgress && (
-                    <DiffActivityView diff={agent.diff} />
-                  )}
                   {renderMessageSlot(
                     agent.messages[agent.messages.length - 1]!,
                     agent.messages.length - 1,
@@ -2328,9 +2452,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
                   {agent.messages.map((msg, i) => renderMessageSlot(msg, i))}
                   {(agent.activities?.length ?? 0) > 0 && (
                     <ActivityFeed activities={agent.activities ?? []} />
-                  )}
-                  {agent.diff && agent.turnInProgress && (
-                    <DiffActivityView diff={agent.diff} />
                   )}
                 </>
               )}
@@ -2355,7 +2476,7 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       <div
         className={cn(
           "max-w-[680px] mx-auto w-full pb-4 shrink-0 relative z-30 -mt-20 bg-transparent transition-[padding] duration-150",
-          fileTreeOpen ? "px-4" : "px-6",
+          (fileTreeOpen || diffPanelOpen) ? "px-4" : "px-6",
         )}
       >
 
