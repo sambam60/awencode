@@ -1953,6 +1953,10 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     }
   }, [agent.id, editConfirm]);
 
+  const handleDismissEditConfirm = useCallback(() => {
+    setEditConfirm(null);
+  }, []);
+
   useEffect(() => {
     if (!editConfirm) return;
     const onKey = (e: KeyboardEvent) => {
@@ -2069,6 +2073,11 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             promptEditTarget={promptEdit}
             onPromptEditSubmit={handlePromptEditSubmit}
             onCancelPromptEdit={handleCancelPromptEdit}
+            promptEditConfirmPending={!!editConfirm}
+            onApplyEditKeep={applyEditKeep}
+            onApplyEditRevert={applyEditRevert}
+            editSubmitting={editSubmitting}
+            onDismissPromptEditConfirm={handleDismissEditConfirm}
           />
         </div>
       );
@@ -2675,63 +2684,6 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
       </div>{/* end chat column */}
       </div>{/* end content area flex-row */}
 
-      {editConfirm ? (
-        <>
-          <div
-            className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
-            onClick={() => setEditConfirm(null)}
-            aria-hidden
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="edit-prompt-dialog-title"
-            className="fixed left-1/2 top-1/2 z-[90] w-[min(400px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-default bg-bg-card p-5 shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.25)]"
-          >
-            <h2
-              id="edit-prompt-dialog-title"
-              className="font-sans text-[14px] font-semibold text-text-primary tracking-[-0.02em] mb-2"
-            >
-              Update this message?
-            </h2>
-            <p className="font-sans text-[12.5px] text-text-secondary leading-relaxed mb-5">
-              <span className="font-medium text-text-primary">Revert</span>{" "}
-              removes everything after this prompt on the thread and sends your
-              edited text again (matches the server via rollback when available).
-            </p>
-            <p className="font-sans text-[12.5px] text-text-secondary leading-relaxed mb-5">
-              <span className="font-medium text-text-primary">Keep</span>{" "}
-              only updates this bubble in the transcript and leaves later
-              messages as they are.
-            </p>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2">
-              <button
-                type="button"
-                onClick={() => setEditConfirm(null)}
-                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={applyEditKeep}
-                className="px-3 py-1.5 text-[11.5px] text-text-secondary border border-border-default rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
-              >
-                Keep
-              </button>
-              <button
-                type="button"
-                autoFocus
-                disabled={editSubmitting}
-                onClick={() => void applyEditRevert()}
-                className="px-3 py-1.5 text-[11.5px] font-medium bg-text-primary text-bg-card rounded-md hover:opacity-90 transition-opacity duration-120 cursor-pointer disabled:opacity-50"
-              >
-                {editSubmitting ? "Reverting…" : "Revert"}
-              </button>
-            </div>
-          </div>
-        </>
-      ) : null}
     </div>
   );
 }

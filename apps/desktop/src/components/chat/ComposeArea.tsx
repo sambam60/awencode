@@ -2,6 +2,7 @@ import {
   useState,
   useRef,
   useCallback,
+  useEffect,
   useLayoutEffect,
   type ReactNode,
   type RefObject,
@@ -66,6 +67,13 @@ interface ComposeAreaProps {
   onStop?: () => void;
   /** True while a stop request is in flight. */
   stopping?: boolean;
+  /** Thread edit: after Send, morphs the send control into Keep/Revert instead of a modal. */
+  promptEditConfirmPending?: boolean;
+  onApplyEditKeep?: () => void;
+  onApplyEditRevert?: () => void;
+  editSubmitting?: boolean;
+  /** Clear Keep/Revert and return to Send when user presses outside the compose (e.g. transcript). */
+  onDismissPromptEditConfirm?: () => void;
 }
 
 const REASONING_LEVELS: Array<{ id: ReasoningEffort; label: string }> = [
@@ -166,6 +174,11 @@ export function ComposeArea({
   onCancelPromptEdit,
   placement = "dock",
   isRunning = false,
+  promptEditConfirmPending = false,
+  onApplyEditKeep,
+  onApplyEditRevert,
+  editSubmitting = false,
+  onDismissPromptEditConfirm,
 }: ComposeAreaProps) {
   const setComposeDraft = useChatUiStore((s) => s.setComposeDraft);
   const [value, setValue] = useState(() =>
@@ -195,6 +208,20 @@ export function ComposeArea({
   const modelAnchorRef = useRef<HTMLButtonElement>(null);
   const reasoningAnchorRef = useRef<HTMLButtonElement>(null);
 
+  useEffect(() => {
+    if (!promptEditConfirmPending || !onDismissPromptEditConfirm) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest(".glass-overlay")) return;
+      const root = composeRootRef.current;
+      if (root?.contains(t)) return;
+      onDismissPromptEditConfirm();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [promptEditConfirmPending, onDismissPromptEditConfirm]);
+
   const defaultSelectedModelId = useSettingsStore((s) => s.selectedModelId);
   const defaultSelectedReasoningEffort = useSettingsStore((s) => s.selectedReasoningEffort);
   const azureDeployments = useSettingsStore((s) => s.azureDeployments);
@@ -223,6 +250,7 @@ export function ComposeArea({
     modelOptions[0];
 
   const handleSubmit = useCallback(() => {
+    if (promptEditConfirmPending) return;
     const trimmed = value.trim();
     if (!trimmed && attachments.length === 0) return;
     if (promptEditTarget && onPromptEditSubmit) {
@@ -235,7 +263,14 @@ export function ComposeArea({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, attachments, onSend, promptEditTarget, onPromptEditSubmit]);
+  }, [
+    value,
+    attachments,
+    onSend,
+    promptEditTarget,
+    onPromptEditSubmit,
+    promptEditConfirmPending,
+  ]);
 
   const addFilesFromList = useCallback((files: File[]) => {
     files.forEach((file) => {
@@ -368,7 +403,7 @@ export function ComposeArea({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      if (!promptEditConfirmPending) handleSubmit();
     }
   };
 
@@ -380,6 +415,13 @@ export function ComposeArea({
   };
 
   const canSend = !disabled && (value.trim().length > 0 || attachments.length > 0);
+
+  /** Inline thread edit: morph send ↔ Keep/Revert with shared width transition. */
+  const morphEditSendSlot =
+    placement === "thread" &&
+    promptEditTarget &&
+    onApplyEditKeep &&
+    onApplyEditRevert;
 
   // Expand only after enough content — 30 chars of text OR any attachment
   const EXPAND_THRESHOLD = 50;
@@ -594,7 +636,7 @@ export function ComposeArea({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  handleSubmit();
+                  if (!promptEditConfirmPending) handleSubmit();
                 }
               }}
               disabled={disabled}
@@ -709,21 +751,84 @@ export function ComposeArea({
             <Mic size={15} strokeWidth={1.5} />
           </button>
 
-          {/* Send — always visible; queues message when a turn is in-flight */}
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!canSend}
-            className={cn(
-              "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
-              canSend
-                ? "bg-text-primary text-bg-card hover:opacity-90"
-                : "bg-bg-secondary text-text-faint",
-            )}
-            aria-label={isRunning ? "Queue message" : "Send"}
-          >
-            <ArrowUp size={15} strokeWidth={2} />
-          </button>
+          {/* Send — morphs into Keep / Revert after submit during thread prompt edit */}
+          {morphEditSendSlot ? (
+            <div
+              className={cn(
+                "relative min-h-9 shrink-0 rounded-full",
+                "transition-[width,min-width] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
+                promptEditConfirmPending ? "min-w-[140px] w-[140px]" : "w-7 min-w-7",
+              )}
+            >
+              <div
+                className={cn(
+                  "absolute inset-y-0 right-0 flex items-center justify-center origin-center",
+                  "transition-[opacity,transform] duration-[180ms] ease-out",
+                  promptEditConfirmPending
+                    ? "opacity-0 scale-[0.9] pointer-events-none"
+                    : "opacity-100 scale-100 pointer-events-auto",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!canSend}
+                  className={cn(
+                    "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
+                    canSend
+                      ? "bg-text-primary text-bg-card hover:opacity-90"
+                      : "bg-bg-secondary text-text-faint",
+                  )}
+                  aria-label={isRunning ? "Queue message" : "Send"}
+                >
+                  <ArrowUp size={15} strokeWidth={2} />
+                </button>
+              </div>
+              <div
+                className={cn(
+                  "absolute inset-y-0 right-0 flex items-center justify-end gap-1.5 pl-0.5",
+                  "transition-[opacity,transform] duration-[180ms] ease-out",
+                  promptEditConfirmPending
+                    ? "opacity-100 scale-100 pointer-events-auto"
+                    : "opacity-0 scale-[0.9] pointer-events-none translate-y-px",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={onApplyEditKeep}
+                  className="shrink-0 px-3 py-1.5 rounded-full text-[11.5px] font-medium text-text-secondary border border-border-default bg-transparent hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                >
+                  Keep
+                </button>
+                <button
+                  type="button"
+                  autoFocus={promptEditConfirmPending}
+                  disabled={editSubmitting}
+                  onClick={() => {
+                    void onApplyEditRevert?.();
+                  }}
+                  className="shrink-0 px-3 py-1.5 rounded-full text-[11.5px] font-medium bg-text-primary text-bg-card hover:opacity-90 transition-opacity duration-120 cursor-pointer disabled:opacity-50"
+                >
+                  {editSubmitting ? "Reverting…" : "Revert"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSend}
+              className={cn(
+                "w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-200 cursor-pointer disabled:cursor-default",
+                canSend
+                  ? "bg-text-primary text-bg-card hover:opacity-90"
+                  : "bg-bg-secondary text-text-faint",
+              )}
+              aria-label={isRunning ? "Queue message" : "Send"}
+            >
+              <ArrowUp size={15} strokeWidth={2} />
+            </button>
+          )}
         </div>
       </div>
     </div>
