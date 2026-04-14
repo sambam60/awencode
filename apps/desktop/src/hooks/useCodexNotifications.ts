@@ -2,7 +2,10 @@ import { useEffect } from "react";
 import { onNotification, rpcRequest } from "@/lib/rpc-client";
 import { formatCompactCount, parseUnifiedDiff } from "@/lib/agent-metrics";
 import { handleLinearDynamicToolCall } from "@/lib/linear-thread-tools";
-import { useThreadStore } from "@/lib/stores/thread-store";
+import {
+  useThreadStore,
+  STREAMING_THINKING_ACTIVITY_ID,
+} from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import type {
   ActivityKind,
@@ -79,18 +82,18 @@ function classifyTool(toolName: string, input?: unknown): { kind: ActivityKind; 
 
   if (name.includes("shell") || name === "bash" || name === "run_command") {
     const cmd = inputStr ? inputStr.slice(0, SHELL_CMD_MAX) : "";
-    return { kind: "shell", label: "shell", shellCommand: cmd || undefined };
+    return { kind: "shell", label: "Shell", shellCommand: cmd || undefined };
   }
   if (name.includes("read") || name.includes("view") || name.includes("cat")) {
     const file = inputStr ? inputStr.replace(/^["'{]?/, "").slice(0, 60) : "";
-    return { kind: "read_file", label: "read file", detail: file };
+    return { kind: "read_file", label: "Read File", detail: file };
   }
   if (name.includes("write") || name.includes("edit") || name.includes("patch") || name.includes("create")) {
     const file = inputStr ? inputStr.slice(0, 60) : "";
-    return { kind: "write_file", label: "write file", detail: file };
+    return { kind: "write_file", label: "Write File", detail: file };
   }
   if (name.includes("search") || name.includes("grep") || name.includes("find") || name.includes("glob")) {
-    return { kind: "search", label: "search", detail: inputStr?.slice(0, 60) };
+    return { kind: "search", label: "Search", detail: inputStr?.slice(0, 60) };
   }
   return { kind: "tool", label: toolName, detail: inputStr?.slice(0, 80) };
 }
@@ -100,13 +103,13 @@ function activityFromItem(item: Record<string, unknown>): { kind: ActivityKind; 
   const type = item.type as string | undefined;
   if (type === "commandExecution") {
     const cmd = typeof item.command === "string" ? item.command : "";
-    return { kind: "shell", label: "shell", shellCommand: cmd.slice(0, SHELL_CMD_MAX) || undefined };
+    return { kind: "shell", label: "Shell", shellCommand: cmd.slice(0, SHELL_CMD_MAX) || undefined };
   }
   if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];
     const first = changes[0] as { path?: string } | undefined;
     const detail = first?.path ? `${first.path}${changes.length > 1 ? ` +${changes.length - 1}` : ""}` : undefined;
-    return { kind: "write_file", label: "edit file", detail };
+    return { kind: "write_file", label: "Edit File", detail };
   }
   if (type === "mcpToolCall") {
     const tool = typeof item.tool === "string" ? item.tool : "mcp";
@@ -121,7 +124,7 @@ function activityFromItem(item: Record<string, unknown>): { kind: ActivityKind; 
   }
   if (type === "webSearch") {
     const query = typeof item.query === "string" ? item.query : "";
-    return { kind: "search", label: "web search", detail: query.slice(0, 60) };
+    return { kind: "search", label: "Web Search", detail: query.slice(0, 60) };
   }
   return null;
 }
@@ -286,6 +289,18 @@ export function useCodexNotifications() {
         case "item/started": {
           const item = params.item as Record<string, unknown> | undefined;
           if (!item) break;
+
+          if (item.type === "reasoning") {
+            const agentState = useThreadStore.getState().agents.find((a) => a.id === agentId);
+            const hasThinking = agentState?.activities?.some(
+              (a) => a.id === STREAMING_THINKING_ACTIVITY_ID,
+            );
+            if (!hasThinking) {
+              appendAgentThinkingDelta(agentId, "");
+            }
+            break;
+          }
+
           const itemId = typeof item.id === "string" ? item.id : `item-${Date.now()}`;
           const info = activityFromItem(item);
           if (info) {
@@ -306,6 +321,26 @@ export function useCodexNotifications() {
           const item = params.item as Record<string, unknown> | undefined;
           if (!item) break;
           const itemId = typeof item.id === "string" ? item.id : null;
+
+          if (item.type === "reasoning") {
+            const summaryArr = Array.isArray(item.summary) ? item.summary : [];
+            const contentArr = Array.isArray(item.content) ? item.content : [];
+            const text = [...summaryArr, ...contentArr]
+              .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+              .join("\n\n");
+            if (text.length > 0) {
+              const agentState = useThreadStore.getState().agents.find((a) => a.id === agentId);
+              const hasThinking = agentState?.activities?.some(
+                (a) => a.id === STREAMING_THINKING_ACTIVITY_ID || a.label === "thinking",
+              );
+              if (!hasThinking) {
+                appendAgentThinkingDelta(agentId, text);
+              }
+            }
+            finalizeAgentThinking(agentId);
+            break;
+          }
+
           if (itemId) {
             const agent = useThreadStore.getState().agents.find((a) => a.id === agentId);
             const act = agent?.activities?.find((a) => a.id === itemId);

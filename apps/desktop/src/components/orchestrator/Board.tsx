@@ -9,6 +9,7 @@ import { tabNameFromPath, useAppStore } from "@/lib/stores/app-store";
 import { addRecentProject, getRecentProjects } from "@/lib/recent-projects";
 import { useViewStore } from "@/lib/stores/view-store";
 import { BOARD_COLUMN_IDS, useBoardUiStore } from "@/lib/stores/board-ui-store";
+import { useProjectGitStore } from "@/lib/stores/project-git-store";
 import { useSettingsStore } from "@/lib/stores/settings-store";
 import { STATUS_CONFIG } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -91,16 +92,14 @@ export function Orchestrator() {
 
   const handleNewChat = async () => {
     const id = `agent-${Date.now()}`;
-    // Resolve real git branch before creating the agent
     let branch = "";
     let originUrl: string | undefined;
     const cwd = useAppStore.getState().projectPath;
     const { selectedModelId, selectedReasoningEffort } = useSettingsStore.getState();
     if (cwd) {
       try {
-        const info = await invoke<{ branch?: string | null; originUrl?: string | null }>("get_git_info", {
-          path: cwd,
-        });
+        const { byProjectPath, refreshProjectGitInfo } = useProjectGitStore.getState();
+        const info = byProjectPath[cwd] ?? await refreshProjectGitInfo(cwd);
         branch = info?.branch ?? "";
         originUrl = info?.originUrl ?? undefined;
       } catch {

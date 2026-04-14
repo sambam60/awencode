@@ -862,7 +862,7 @@ function GeneralSection({
   const submitAzureDeployment = () => {
     const nextDeployment = draftAzureDeployment.trim();
     if (!nextDeployment) {
-      setAzureDeploymentStatus("Enter a deployment name, then press Enter.");
+      setAzureDeploymentStatus("Enter a deployment name.");
       return;
     }
     const added = addAzureDeployment(nextDeployment);
@@ -900,40 +900,29 @@ function GeneralSection({
                   <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
-                    <div className="w-full flex items-center gap-2">
-                      <input
-                        type="password"
-                        value={draftOpenAi}
-                        onChange={(e) => {
-                          setDraftOpenAi(e.target.value);
-                          setRemoveOpenAi(false);
+                  <div className="w-[280px] max-w-full flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={draftOpenAi}
+                      onChange={(e) => {
+                        setDraftOpenAi(e.target.value);
+                        setRemoveOpenAi(false);
+                      }}
+                      placeholder={storedKeyStatus.openaiConfigured && !removeOpenAi ? "Stored in keychain" : "sk-..."}
+                      className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                    />
+                    {storedKeyStatus.openaiConfigured && !removeOpenAi && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraftOpenAi("");
+                          setRemoveOpenAi(true);
                         }}
-                        placeholder={storedKeyStatus.openaiConfigured && !removeOpenAi ? "Stored securely" : "sk-..."}
-                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                      />
-                      {storedKeyStatus.openaiConfigured && !removeOpenAi && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftOpenAi("");
-                            setRemoveOpenAi(true);
-                          }}
-                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
-                      {removeOpenAi
-                        ? "Stored key will be removed when you apply."
-                        : draftOpenAi.trim().length > 0
-                          ? "New key ready to save securely."
-                          : storedKeyStatus.openaiConfigured
-                            ? "Stored securely in your OS keychain."
-                            : "Not set."}
-                    </div>
+                        className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -954,40 +943,29 @@ function GeneralSection({
                   <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
-                    <div className="w-full flex items-center gap-2">
-                      <input
-                        type="password"
-                        value={draftOpenRouter}
-                        onChange={(e) => {
-                          setDraftOpenRouter(e.target.value);
-                          setRemoveOpenRouter(false);
+                  <div className="w-[280px] max-w-full flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={draftOpenRouter}
+                      onChange={(e) => {
+                        setDraftOpenRouter(e.target.value);
+                        setRemoveOpenRouter(false);
+                      }}
+                      placeholder={storedKeyStatus.openrouterConfigured && !removeOpenRouter ? "Stored in keychain" : "or-..."}
+                      className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                    />
+                    {storedKeyStatus.openrouterConfigured && !removeOpenRouter && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraftOpenRouter("");
+                          setRemoveOpenRouter(true);
                         }}
-                        placeholder={storedKeyStatus.openrouterConfigured && !removeOpenRouter ? "Stored securely" : "or-..."}
-                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                      />
-                      {storedKeyStatus.openrouterConfigured && !removeOpenRouter && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftOpenRouter("");
-                            setRemoveOpenRouter(true);
-                          }}
-                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
-                      {removeOpenRouter
-                        ? "Stored key will be removed when you apply."
-                        : draftOpenRouter.trim().length > 0
-                          ? "New key ready to save securely."
-                          : storedKeyStatus.openrouterConfigured
-                            ? "Stored securely in your OS keychain."
-                            : "Not set."}
-                    </div>
+                        className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1035,52 +1013,43 @@ function GeneralSection({
                         e.preventDefault();
                         submitAzureDeployment();
                       }}
-                      placeholder="Type a deployment, then press Enter"
+                      placeholder="Deployment name - press enter to add"
                       className="w-full px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
                     />
-                    <div className="mt-1 text-[10.5px] text-text-tertiary leading-relaxed">
-                      {azureDeploymentStatus ?? "Press Enter to add this deployment to the model list."}
-                    </div>
+                    {azureDeploymentStatus ? (
+                      <div className="mt-1 text-[10.5px] text-text-tertiary leading-relaxed">
+                        {azureDeploymentStatus}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between gap-6">
                   <span className="text-[12.5px] text-text-secondary">
                     API key
                   </span>
-                  <div className="w-[280px] max-w-full flex flex-col items-end gap-1.5">
-                    <div className="w-full flex items-center gap-2">
-                      <input
-                        type="password"
-                        value={draftAzure}
-                        onChange={(e) => {
-                          setDraftAzure(e.target.value);
-                          setRemoveAzure(false);
+                  <div className="w-[280px] max-w-full flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={draftAzure}
+                      onChange={(e) => {
+                        setDraftAzure(e.target.value);
+                        setRemoveAzure(false);
+                      }}
+                      placeholder={storedKeyStatus.azureConfigured && !removeAzure ? "Stored in keychain" : "..."}
+                      className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
+                    />
+                    {storedKeyStatus.azureConfigured && !removeAzure && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraftAzure("");
+                          setRemoveAzure(true);
                         }}
-                        placeholder={storedKeyStatus.azureConfigured && !removeAzure ? "Stored securely" : "..."}
-                        className="flex-1 min-w-0 px-3 py-2 bg-bg-input border border-border rounded-md text-[12.5px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-colors duration-120"
-                      />
-                      {storedKeyStatus.azureConfigured && !removeAzure && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftAzure("");
-                            setRemoveAzure(true);
-                          }}
-                          className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <div className="w-full text-[10.5px] text-text-tertiary text-right">
-                      {removeAzure
-                        ? "Stored key will be removed when you apply."
-                        : draftAzure.trim().length > 0
-                          ? "New key ready to save securely."
-                          : storedKeyStatus.azureConfigured
-                            ? "Stored securely in your OS keychain."
-                            : "Not set."}
-                    </div>
+                        className="px-2.5 py-2 text-[10.5px] text-text-secondary border border-border-light rounded-md hover:bg-bg-secondary transition-colors duration-120 cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

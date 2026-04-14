@@ -787,18 +787,23 @@ fn sanitize_for_file_name(value: &str) -> String {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct GitInfoResult {
     branch: Option<String>,
     sha: Option<String>,
     origin_url: Option<String>,
+    has_upstream: bool,
+    branch_ahead: bool,
+    needs_publish: bool,
 }
 
 #[tauri::command]
 async fn get_git_info(path: String) -> Result<GitInfoResult, String> {
-    let path = std::path::Path::new(&path);
+    let path = std::path::PathBuf::from(path);
     if !path.is_dir() {
         return Err("Not a directory".to_string());
     }
+    let status = read_git_status(&path).await.ok();
     let path_clone = path.to_path_buf();
     let (branch, sha, origin_url) = tokio::task::spawn_blocking(move || {
         let branch = std::process::Command::new("git")
@@ -832,10 +837,20 @@ async fn get_git_info(path: String) -> Result<GitInfoResult, String> {
     })
     .await
     .map_err(|e| e.to_string())?;
+    let branch = status
+        .as_ref()
+        .and_then(|status| status.current_branch.clone())
+        .or(branch);
+    let has_upstream = status.as_ref().is_some_and(|status| status.has_upstream);
+    let branch_ahead = status.as_ref().is_some_and(|status| status.branch_ahead);
+    let needs_publish = branch.is_some() && !has_upstream;
     Ok(GitInfoResult {
         branch,
         sha,
         origin_url,
+        has_upstream,
+        branch_ahead,
+        needs_publish,
     })
 }
 

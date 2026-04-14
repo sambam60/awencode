@@ -41,7 +41,7 @@ export function CodeBlock({
         <button
           onClick={handleCopy}
           className={cn(
-            "flex items-center gap-1.5 font-mono text-[10px] transition-all duration-150 cursor-pointer",
+            "flex items-center gap-1.5 font-sans text-[10px] font-medium transition-all duration-150 cursor-pointer",
             copied
               ? "text-accent-green"
               : "text-text-faint hover:text-text-tertiary",
@@ -51,12 +51,12 @@ export function CodeBlock({
           {copied ? (
             <>
               <Check size={10} strokeWidth={2.5} />
-              <span>copied</span>
+              <span>Copied</span>
             </>
           ) : (
             <>
               <Copy size={10} strokeWidth={2} />
-              <span>copy</span>
+              <span>Copy</span>
             </>
           )}
         </button>

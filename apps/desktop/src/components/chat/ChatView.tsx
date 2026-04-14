@@ -1,18 +1,15 @@
 import React, {
-  Fragment,
   useRef,
   useEffect,
   useMemo,
   useState,
   useCallback,
-  memo,
 } from "react";
 import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
   Clock,
-  Code2,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -22,24 +19,19 @@ import {
   FolderOpen,
   FileDiff,
   GitFork,
-  FileCode,
-  ExternalLink,
-  Loader2,
   Shield,
-  Copy,
-  Check,
   FolderTree,
-  Undo2,
   Square,
+  Code2,
 } from "lucide-react";
 import { ComposeArea, type Attachment } from "./ComposeArea";
-import { CodeBlock } from "./CodeBlock";
-import { ShimmerText } from "./ShimmerText";
 import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from "@/components/ai-elements/reasoning";
+  MessageRow,
+  ActivityFeed,
+  StreamingMessage,
+  ThinkingIndicator,
+  STREAMING_THINKING_ACTIVITY_ID,
+} from "./chat-message-rendering";
 import { agentStatusVisual, statusColor } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -47,16 +39,16 @@ import { rpcRequest, rpcRespond } from "@/lib/rpc-client";
 import { interruptTurn } from "@/lib/codex-turn";
 import { sendChatTurn } from "@/lib/send-chat-turn";
 import { submitPromptEditRevert } from "@/lib/submit-prompt-edit";
+import { isDefaultGitBranch, type ProjectGitInfo } from "@/lib/git";
 import { useAppStore } from "@/lib/stores/app-store";
 import { useChatUiStore } from "@/lib/stores/chat-ui-store";
 import { useSettingsStore } from "@/lib/stores/settings-store";
 import { useViewStore } from "@/lib/stores/view-store";
+import { useProjectGitStore } from "@/lib/stores/project-git-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
 import { useAppListStore } from "@/lib/stores/app-list-store";
 import {
-  STREAMING_THINKING_ACTIVITY_ID,
   type Agent,
-  type AgentActivity,
   type AgentMessage,
 } from "@/lib/stores/thread-store";
 import type { LinearIssue } from "@/lib/linear";
@@ -84,288 +76,6 @@ function shouldDiscardQueuedAgent(agentId: string): boolean {
   const draft = useChatUiStore.getState().composeDraftByAgentId[agentId] ?? "";
   return draft.trim().length === 0;
 }
-
-// ─── File chip ────────────────────────────────────────────────────────────────
-
-function FileChip({ path }: { path: string }) {
-  const fileName = path.split("/").pop() ?? path;
-  const ext = fileName.includes(".") ? fileName.split(".").pop() : "";
-
-  const handleOpen = async () => {
-    try {
-      await invoke("open_file_in_editor", { path });
-    } catch {
-      // ignore — command may not be implemented yet
-    }
-  };
-
-  return (
-    <button
-      onClick={handleOpen}
-      title={path}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border-light bg-bg-secondary hover:bg-bg-card hover:border-border-default transition-colors duration-120 cursor-pointer group/chip focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-blue focus-visible:outline-offset-2"
-    >
-      <FileCode size={10} className="text-text-links opacity-80 shrink-0" />
-      <span className="font-mono text-[10.5px] text-text-links group-hover/chip:opacity-90 transition-opacity duration-120 max-w-[200px] truncate">
-        {fileName}
-      </span>
-      {ext && (
-        <span className="font-mono text-[9px] text-text-links opacity-80 uppercase">
-          .{ext}
-        </span>
-      )}
-      <ExternalLink
-        size={8}
-        className="text-text-links opacity-0 group-hover/chip:opacity-70 transition-opacity duration-120 shrink-0"
-      />
-    </button>
-  );
-}
-
-// ─── Tool call block ──────────────────────────────────────────────────────────
-
-function ToolCallBlock({ content }: { content: string }) {
-  const [expanded, setExpanded] = useState(false);
-
-  // Try to parse tool name from JSON or shell( patterns
-  let toolName = "tool call";
-  let prettyContent = content;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.tool) toolName = parsed.tool;
-    else if (parsed?.name) toolName = parsed.name;
-    prettyContent = JSON.stringify(parsed, null, 2);
-  } catch {
-    const shellMatch = content.match(/^(\w+)\(/);
-    if (shellMatch) toolName = shellMatch[1];
-  }
-
-  return (
-    <div className="border border-border-light rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 bg-bg-secondary hover:bg-bg-card transition-colors duration-120 cursor-pointer text-left"
-      >
-        <Code2 size={11} className="text-text-faint shrink-0" />
-        <span className="font-mono text-[10.5px] text-text-secondary flex-1">
-          {toolName}
-        </span>
-        <ChevronDown
-          size={10}
-          className={cn(
-            "text-text-faint transition-transform duration-150",
-            expanded ? "rotate-180" : "",
-          )}
-        />
-      </button>
-      {expanded && (
-        <div className="bg-bg-card border-t border-border-light">
-          <CodeBlock code={prettyContent} language="json" showLineNumbers />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Lightweight markdown renderer ───────────────────────────────────────────
-// Avoids react-markdown ESM issues; handles the common cases from LLM output.
-
-function safeMarkdownHref(href: string): string | null {
-  const t = href.trim();
-  if (/^https?:\/\//i.test(t)) return t;
-  if (/^mailto:/i.test(t)) return t;
-  return null;
-}
-
-/** Workspace-relative paths in `[label](path)` — not http(s); open in editor. */
-function safeMarkdownFilePath(href: string): string | null {
-  const t = href.trim();
-  if (t.length === 0 || t === "." || t === "..") return null;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(t)) return null;
-  if (!/^[\w./-]+$/u.test(t)) return null;
-  return t;
-}
-
-const markdownAnchorClass =
-  "text-text-links underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-blue focus-visible:outline-offset-1 rounded-sm";
-
-/** Strip trailing punctuation often pasted after URLs in prose. */
-function trimUrlPunct(url: string): string {
-  return url.replace(/[.,;:!?)]+$/gu, "");
-}
-
-/** Turn raw https URLs in plain text into anchors (models often omit markdown link syntax). */
-function linkifyBareUrls(text: string, keyPrefix: string): React.ReactNode[] {
-  const re = /https?:\/\/[^\s<>"'`]+/gi;
-  const matches = [...text.matchAll(re)];
-  if (matches.length === 0) {
-    return [text];
-  }
-  const out: React.ReactNode[] = [];
-  let last = 0;
-  for (let j = 0; j < matches.length; j++) {
-    const m = matches[j]!;
-    const idx = m.index ?? 0;
-    if (idx > last) {
-      out.push(text.slice(last, idx));
-    }
-    const raw = m[0];
-    const href = safeMarkdownHref(trimUrlPunct(raw));
-    if (href) {
-      out.push(
-        <a
-          key={`${keyPrefix}-u${j}`}
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          className={markdownAnchorClass}
-        >
-          {raw}
-        </a>,
-      );
-    } else {
-      out.push(raw);
-    }
-    last = idx + raw.length;
-  }
-  if (last < text.length) {
-    out.push(text.slice(last));
-  }
-  return out;
-}
-
-function parseInline(text: string, keyPrefix: string): React.ReactNode[] {
-  // **bold**, *em*, `code`, [File: path], [label](url), @file.ext (12-34)
-  const parts = text.split(
-    /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[File: [^\]]+\]|\[[^\]]+\]\([^)]+\)|@[\w./-]+\s*\(\d+(?:-\d+)?\))/g,
-  );
-  return parts.flatMap((part, i): React.ReactNode[] => {
-    const key = `${keyPrefix}-${i}`;
-    if (part === "") {
-      return [];
-    }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      if (part.length < 4) {
-        return [part];
-      }
-      const inner = part.slice(2, -2);
-      if (inner.length === 0) {
-        return [part];
-      }
-      return [
-        <strong key={key} className="font-semibold text-text-primary">
-          {parseInline(inner, `${key}-b`)}
-        </strong>,
-      ];
-    }
-    if (part.startsWith("*") && part.endsWith("*")) {
-      if (part.length < 3) {
-        return [part];
-      }
-      const inner = part.slice(1, -1);
-      if (inner.length === 0) {
-        return [part];
-      }
-      return [
-        <em key={key} className="italic text-text-secondary">
-          {parseInline(inner, `${key}-em`)}
-        </em>,
-      ];
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return [
-        <code
-          key={key}
-          className="font-mono text-[11.5px] px-1.5 py-0.5 rounded bg-bg-secondary border border-border-light text-text-primary"
-        >
-          {part.slice(1, -1)}
-        </code>,
-      ];
-    }
-    const fileMatch = part.match(/^\[File: (.+)\]$/);
-    if (fileMatch) {
-      return [<FileChip key={key} path={fileMatch[1]} />];
-    }
-    const mdLink = part.match(/^\[([^\]]*)\]\(([^)]+)\)$/);
-    if (mdLink) {
-      const rawHref = mdLink[2];
-      const webHref = safeMarkdownHref(rawHref);
-      if (webHref) {
-        return [
-          <a
-            key={key}
-            href={webHref}
-            target="_blank"
-            rel="noreferrer"
-            className={markdownAnchorClass}
-          >
-            {mdLink[1] || webHref}
-          </a>,
-        ];
-      }
-      const filePath = safeMarkdownFilePath(rawHref);
-      if (filePath) {
-        const label = mdLink[1] || filePath;
-        return [
-          <button
-            key={key}
-            type="button"
-            title={filePath}
-            onClick={() => {
-              invoke("open_file_in_editor", { path: filePath }).catch(() => {});
-            }}
-            className={cn(
-              markdownAnchorClass,
-              "inline p-0 border-0 bg-transparent cursor-pointer text-left font-sans text-[13px]",
-            )}
-          >
-            {label}
-          </button>,
-        ];
-      }
-      return [
-        <span key={key} className="text-text-tertiary">
-          {mdLink[1]}
-        </span>,
-      ];
-    }
-    const atRef = part.match(/^@([\w./-]+)\s*\((\d+)(?:-(\d+))?\)$/);
-    if (atRef) {
-      const refPath = atRef[1];
-      const handleAtOpen = async () => {
-        try {
-          await invoke("open_file_in_editor", { path: refPath });
-        } catch {
-          /* path may be workspace-relative or unknown */
-        }
-      };
-      return [
-        <button
-          key={key}
-          type="button"
-          onClick={handleAtOpen}
-          title={`Open ${refPath}`}
-          className="inline font-mono text-[11px] text-text-links hover:opacity-90 underline-offset-2 hover:underline cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-blue focus-visible:outline-offset-1 rounded-sm"
-        >
-          @{refPath} ({atRef[2]}
-          {atRef[3] ? `-${atRef[3]}` : ""})
-        </button>,
-      ];
-    }
-    const linked = linkifyBareUrls(part, key);
-    if (linked.length === 1 && typeof linked[0] === "string") {
-      return [linked[0]!];
-    }
-    return [<Fragment key={key}>{linked}</Fragment>];
-  });
-}
-
-// Wrap a node in a div that blur-staggers in via CSS animation
-const StreamBlock = memo(({ children }: { children: React.ReactNode }) => (
-  <div className="animate-block-in">
-    {children}
-  </div>
-));
 
 function ChatEdgeBlurOverlays() {
   return (
@@ -447,266 +157,6 @@ function HeaderMetaItem({
   );
 }
 
-type ParsedNode = { key: string; node: React.ReactNode };
-
-function parseContent(content: string): ParsedNode[] {
-  const text = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const segments = text.split(/(```[\s\S]*?```|```[\s\S]*$)/g);
-
-  let nodeIdx = 0;
-  const k = (prefix: string) => `${prefix}-${nodeIdx++}`;
-  const result: ParsedNode[] = [];
-
-  for (const seg of segments) {
-    if (seg.startsWith("```")) {
-      const firstNewline = seg.indexOf("\n");
-      const lang = firstNewline > 3 ? seg.slice(3, firstNewline).trim() || undefined : undefined;
-      const code = firstNewline >= 0 ? seg.slice(firstNewline + 1).replace(/```\s*$/, "").trimEnd() : "";
-      const key = k("code");
-      result.push({ key, node: <CodeBlock key={key} code={code} language={lang} showLineNumbers={code.split("\n").length > 4} /> });
-      continue;
-    }
-
-    const lines = seg.split("\n");
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      if (line.trim() === "") { i++; continue; }
-
-      const hm = line.match(/^(#{1,3}) (.+)/);
-      if (hm) {
-        const level = hm[1].length;
-        const cls = level === 1
-          ? "text-[15px] font-semibold text-text-primary tracking-[-0.02em] mt-5 mb-2"
-          : level === 2 ? "text-[13.5px] font-semibold text-text-primary tracking-[-0.015em] mt-4 mb-2"
-          : "text-[12.5px] font-medium text-text-primary mt-3 mb-1.5";
-        const Tag = `h${level}` as "h1" | "h2" | "h3";
-        const key = k("h");
-        result.push({ key, node: <Tag key={key} className={cls}>{parseInline(hm[2], key)}</Tag> });
-        i++; continue;
-      }
-
-      if (/^---+$/.test(line.trim())) {
-        const key = k("hr");
-        result.push({ key, node: <hr key={key} className="my-4 border-border-light" /> });
-        i++; continue;
-      }
-
-      if (line.startsWith("> ")) {
-        const key = k("bq");
-        result.push({ key, node: <blockquote key={key} className="border-l-[2.5px] border-border-default pl-3 my-2 text-text-secondary italic text-[13px] leading-relaxed">{parseInline(line.slice(2), key)}</blockquote> });
-        i++; continue;
-      }
-
-      if (/^[-*+] /.test(line)) {
-        const items: React.ReactNode[] = [];
-        const startI = i;
-        while (i < lines.length && /^[-*+] /.test(lines[i])) {
-          items.push(<li key={i} className="leading-relaxed">{parseInline(lines[i].slice(2), `li-${i}`)}</li>);
-          i++;
-        }
-        const key = k("ul");
-        result.push({ key, node: <ul key={key} className="mb-3 pl-4 space-y-0.5 list-disc list-outside text-[13px] text-text-primary leading-relaxed">{items}</ul> });
-        void startI; continue;
-      }
-
-      if (/^\d+[.)]\s/.test(line)) {
-        const items: React.ReactNode[] = [];
-        const startI = i;
-        while (i < lines.length && /^\d+[.)]\s/.test(lines[i])) {
-          items.push(<li key={i} className="leading-relaxed">{parseInline(lines[i].replace(/^\d+[.)]\s/, ""), `oli-${i}`)}</li>);
-          i++;
-        }
-        const key = k("ol");
-        result.push({ key, node: <ol key={key} className="mb-3 pl-4 space-y-0.5 list-decimal list-outside text-[13px] text-text-primary leading-relaxed">{items}</ol> });
-        void startI; continue;
-      }
-
-      const paraLines: string[] = [];
-      const startPara = i;
-      while (
-        i < lines.length &&
-        lines[i].trim() !== "" &&
-        !/^#{1,3} /.test(lines[i]) &&
-        !/^[-*+] /.test(lines[i]) &&
-        !/^\d+[.)]\s/.test(lines[i]) &&
-        !/^---+$/.test(lines[i].trim()) &&
-        !lines[i].startsWith("> ")
-      ) {
-        paraLines.push(lines[i]);
-        i++;
-      }
-      if (paraLines.length > 0) {
-        const key = k("p");
-        result.push({ key, node: <p key={key} className="mb-3 last:mb-0 text-[13px] text-text-primary leading-relaxed">{parseInline(paraLines.join(" "), `p-${startPara}`)}</p> });
-      }
-    }
-  }
-
-  return result;
-}
-
-function AgentMarkdown({ content, streaming = false }: { content: string; streaming?: boolean }) {
-  // During streaming, track which keys have already been shown so only new blocks animate
-  const seenKeysRef = useRef<Set<string>>(new Set());
-
-  const parsed = parseContent(content);
-
-  if (parsed.length === 0) {
-    return (
-      <p className="agent-markdown text-[13px] font-sans text-text-primary leading-relaxed min-w-0 [overflow-wrap:anywhere]">
-        {parseInline(content, "fallback")}
-      </p>
-    );
-  }
-
-  return (
-    <div className="agent-markdown font-sans min-w-0 [overflow-wrap:anywhere]">
-      {parsed.map(({ key, node }) => {
-        if (!streaming) return <React.Fragment key={key}>{node}</React.Fragment>;
-
-        const isNew = !seenKeysRef.current.has(key);
-        if (isNew) seenKeysRef.current.add(key);
-
-        if (isNew) {
-          return <StreamBlock key={key}>{node}</StreamBlock>;
-        }
-        return <React.Fragment key={key}>{node}</React.Fragment>;
-      })}
-    </div>
-  );
-}
-
-// ─── Message row ──────────────────────────────────────────────────────────────
-
-function MessageRow({
-  message,
-  messageIndex,
-  onEditPrompt,
-  promptEditEnabled,
-}: {
-  message: AgentMessage;
-  messageIndex: number;
-  onEditPrompt?: (messageIndex: number, text: string) => void;
-  promptEditEnabled?: boolean;
-}) {
-  const isUser = message.role === "you";
-  const [copied, setCopied] = useState(false);
-  const copiedTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copiedTimeoutRef.current) {
-        window.clearTimeout(copiedTimeoutRef.current);
-        copiedTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  if (isUser) {
-    return (
-      <div className="flex justify-end mb-5 min-w-0">
-        <div className="w-fit max-w-[80%] min-w-0 flex flex-col gap-2 items-end">
-          {message.imageUrls && message.imageUrls.length > 0 && (
-            <div className="flex flex-wrap gap-2 justify-end">
-              {message.imageUrls.map((url, i) => (
-                <img
-                  key={i}
-                  src={url}
-                  alt=""
-                  className="max-w-[200px] max-h-[200px] rounded-lg object-cover border border-border-light"
-                />
-              ))}
-            </div>
-          )}
-          {message.content && (
-            <div className="min-w-0 max-w-full flex items-start gap-2 px-2.5 py-2 bg-bg-user-message border border-border-user-message rounded-[10px] text-[13px] text-text-primary leading-relaxed whitespace-pre-wrap text-left [overflow-wrap:anywhere]">
-              <span className="min-w-0 flex-1">{message.content}</span>
-              {onEditPrompt && promptEditEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => onEditPrompt(messageIndex, message.content)}
-                  className="shrink-0 mt-0.5 p-1 rounded-md text-text-tertiary hover:text-text-secondary transition-colors duration-120 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-blue"
-                  title="Edit prompt"
-                  aria-label="Edit prompt"
-                >
-                  <Undo2 size={14} strokeWidth={2} />
-                </button>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const isToolCall =
-    message.content.startsWith("{") || message.content.includes("shell(");
-
-  if (isToolCall) {
-    return (
-      <div className="mb-3">
-        <ToolCallBlock content={message.content} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mb-5 group/response min-w-0">
-      <AgentMarkdown content={message.content} />
-      <button
-        type="button"
-        onClick={() => {
-          navigator.clipboard.writeText(message.content).catch(() => {});
-          if (copiedTimeoutRef.current) {
-            window.clearTimeout(copiedTimeoutRef.current);
-          }
-          setCopied(true);
-          copiedTimeoutRef.current = window.setTimeout(() => {
-            setCopied(false);
-            copiedTimeoutRef.current = null;
-          }, 1200);
-        }}
-        className={cn(
-          "mt-1 inline-flex items-center justify-center rounded-sm p-1",
-          "cursor-pointer transition-all duration-200 ease-out",
-          "opacity-0 translate-y-0.5 group-hover/response:opacity-100 group-hover/response:translate-y-0",
-          "focus-visible:opacity-100 focus-visible:translate-y-0",
-          copied
-            ? "text-accent-green"
-            : "text-text-faint hover:text-text-secondary",
-        )}
-        title="Copy response"
-        aria-label="Copy response"
-      >
-        {copied ? (
-          <Check size={11} strokeWidth={2.2} />
-        ) : (
-          <Copy size={11} strokeWidth={2} />
-        )}
-      </button>
-    </div>
-  );
-}
-
-// ─── Streaming message ────────────────────────────────────────────────────────
-
-function StreamingMessage({ buffer }: { buffer: string }) {
-  return (
-    <div className="mb-5 min-w-0">
-      <AgentMarkdown content={buffer} streaming />
-      <span className="inline-block w-[2px] h-[14px] ml-0.5 bg-text-faint align-middle animate-cursor-blink" />
-    </div>
-  );
-}
-
-// ─── Activity feed ────────────────────────────────────────────────────────────
-
-function isThinkingActivity(a: AgentActivity): boolean {
-  return a.kind === "log" && a.label === "thinking";
-}
-
-const DURATION_MS = 1000;
 const FILE_TREE_DEFAULT_WIDTH_PX = 244;
 const FILE_TREE_MIN_WIDTH_PX = 216;
 const FILE_TREE_MAX_WIDTH_PX = 360;
@@ -714,318 +164,14 @@ const DIFF_PANEL_DEFAULT_WIDTH_PX = 340;
 const DIFF_PANEL_MIN_WIDTH_PX = 280;
 const DIFF_PANEL_MAX_WIDTH_PX = 600;
 
-function activityDurationSeconds(activity: AgentActivity): number | undefined {
-  if (activity.status === "running" || activity.durationMs == null) {
-    return undefined;
-  }
-  return Math.max(1, Math.ceil(activity.durationMs / DURATION_MS));
-}
-
-/** Model reasoning — ai-elements Reasoning pattern (collapsible + shimmer). */
-function ThinkingCard({ activity }: { activity: AgentActivity }) {
-  const isStreaming = activity.status === "running";
-  const detail = activity.detail?.trim() ?? "";
-  const durationSec = activityDurationSeconds(activity);
-
-  return (
-    <div className="mb-2">
-      <Reasoning
-        key={activity.id}
-        isStreaming={isStreaming}
-        duration={durationSec}
-        defaultOpen={isStreaming}
-      >
-        <ReasoningTrigger />
-        {detail ? <ReasoningContent>{detail}</ReasoningContent> : null}
-      </Reasoning>
-    </div>
-  );
-}
-
-function toolTriggerLabel(
-  label: string,
-  isStreaming: boolean,
-  duration?: number,
-): string {
-  if (isStreaming || duration === 0) {
-    return `${label}…`;
-  }
-  if (duration === undefined) {
-    return label;
-  }
-  return `${label} · ${duration}s`;
-}
-
-/** Non-shell tools — same collapsible / shimmer pattern as reasoning. */
-function ToolReasoningRow({ activity }: { activity: AgentActivity }) {
-  const isStreaming = activity.status === "running";
-  const detail = activity.detail ?? "";
-  const durationSec = activityDurationSeconds(activity);
-
-  return (
-    <div className="mb-2">
-      <Reasoning
-        key={activity.id}
-        isStreaming={isStreaming}
-        duration={durationSec}
-        defaultOpen={Boolean(isStreaming && detail)}
-      >
-        <ReasoningTrigger
-          getThinkingMessage={(streaming, dur) =>
-            toolTriggerLabel(activity.label, streaming, dur)
-          }
-        />
-        {detail.trim() ? (
-          <ReasoningContent>{detail}</ReasoningContent>
-        ) : null}
-      </Reasoning>
-    </div>
-  );
-}
-
-/** First shell invocations for a muted inline summary (e.g. `cd, npx`). */
-function shellCommandBins(cmd: string): string {
-  const segments = cmd.split(/(?:&&|\|\||;|\n)/g);
-  const bins: string[] = [];
-  const seen = new Set<string>();
-  for (const seg of segments) {
-    const t = seg.trim();
-    if (!t || t.startsWith("#")) continue;
-    const raw = t.split(/\s+/)[0] ?? "";
-    const token = raw
-      .replace(/^[{(['"`]+/, "")
-      .replace(/['")\]}]+$/, "");
-    if (!token || seen.has(token)) continue;
-    seen.add(token);
-    bins.push(token);
-    if (bins.length >= 5) break;
-  }
-  return bins.join(", ");
-}
-
-/** Single shell command row — borderless, rendered inside a group card. */
-function ShellActivityRow({ activity, isLast }: { activity: AgentActivity; isLast?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copyTimeoutRef = useRef<number | null>(null);
-  const isRunning = activity.status === "running";
-  const commandLine =
-    activity.shellCommand ?? (activity.detail?.trim() ? activity.detail : "") ?? "";
-  const output = activity.shellCommand != null ? (activity.detail ?? "").trim() : "";
-  const fallbackExpandedContent =
-    activity.shellCommand == null ? (activity.detail ?? "").trim() : "";
-  const expandedContent = output || fallbackExpandedContent;
-  const canExpand = isRunning || expandedContent.length > 0;
-  const bins = shellCommandBins(commandLine);
-
-  const handleCopy = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      (e.currentTarget as HTMLButtonElement).blur();
-      const text =
-        expandedContent.length > 0 ? `${commandLine}\n\n${expandedContent}` : commandLine;
-      if (!text.trim()) return;
-      navigator.clipboard.writeText(text).catch(() => {});
-      if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
-      setCopied(true);
-      copyTimeoutRef.current = window.setTimeout(() => {
-        setCopied(false);
-        copyTimeoutRef.current = null;
-      }, 1600);
-    },
-    [commandLine, expandedContent],
-  );
-
-  return (
-    <div className={cn(!isLast && "border-b border-border-shell-surface")}>
-      <div
-        className={cn(
-          "group/shell-header flex min-h-[32px] items-stretch transition-colors duration-120",
-          canExpand
-            ? "cursor-pointer hover:bg-[rgba(0,0,0,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)]"
-            : "",
-        )}
-        onClick={() => canExpand && setExpanded((v) => !v)}
-        role={canExpand ? "button" : undefined}
-        aria-expanded={canExpand ? expanded : undefined}
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5">
-          {canExpand ? (
-            <ChevronRight
-              size={12}
-              strokeWidth={2}
-              className={cn(
-                "shrink-0 text-shell-text-muted transition-all duration-150",
-                expanded
-                  ? "rotate-90 opacity-100"
-                  : "rotate-0 opacity-0 group-hover/shell-header:opacity-100 group-focus-within/shell-header:opacity-100",
-              )}
-              aria-hidden
-            />
-          ) : (
-            <span className="w-3 shrink-0" aria-hidden />
-          )}
-          <Terminal
-            size={11}
-            strokeWidth={2}
-            className="shrink-0 text-text-faint"
-            aria-hidden
-          />
-          <div className="min-w-0 flex-1 flex items-center gap-2">
-            <span className="truncate font-sans text-[12px] leading-tight text-shell-text">
-              {commandLine.trim() ? commandLine : "—"}
-            </span>
-            {bins ? (
-              <span className="shrink-0 font-sans text-[10.5px] leading-tight text-shell-text-muted">
-                {bins}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5 pl-1">
-            {isRunning ? (
-              <Loader2 size={10} className="text-accent-blue animate-spin" />
-            ) : null}
-            {!isRunning && activity.durationMs !== undefined ? (
-              <span className="font-sans text-[9.5px] tabular-nums text-shell-text-muted">
-                {activity.durationMs < 1000
-                  ? `${activity.durationMs}ms`
-                  : `${(activity.durationMs / 1000).toFixed(1)}s`}
-              </span>
-            ) : null}
-          </div>
-        </div>
-        {commandLine.trim() ? (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); handleCopy(e); }}
-            title="Copy command and output"
-            aria-label="Copy command and output"
-            className={cn(
-              "flex items-center justify-center px-2 transition-all duration-150",
-              "text-shell-text-muted hover:text-shell-text",
-              "opacity-0 group-hover/shell-header:opacity-100 group-focus-within/shell-header:opacity-100",
-            )}
-          >
-            {copied ? (
-              <Check size={12} strokeWidth={2.2} className="text-accent-green" />
-            ) : (
-              <Copy size={12} strokeWidth={2} />
-            )}
-          </button>
-        ) : null}
-      </div>
-      {expanded && canExpand ? (
-        <div className="border-t border-border-shell-surface px-3 py-2">
-          {expandedContent ? (
-            <pre className="font-mono text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
-              {expandedContent}
-            </pre>
-          ) : isRunning ? (
-            <span className="font-mono text-[11px] text-shell-text-muted">…</span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const SHELL_COLLAPSE_THRESHOLD = 3;
-
-/** Wraps consecutive shell activities in one card; auto-collapses older ones. */
-function ShellActivityGroup({ activities }: { activities: AgentActivity[] }) {
-  const collapsible = activities.length > SHELL_COLLAPSE_THRESHOLD;
-  const [expanded, setExpanded] = useState(false);
-  const hiddenCount = activities.length - SHELL_COLLAPSE_THRESHOLD;
-  const visible = collapsible && !expanded
-    ? activities.slice(activities.length - SHELL_COLLAPSE_THRESHOLD)
-    : activities;
-
-  return (
-    <div className="mb-1.5 rounded-lg border border-border-shell-surface overflow-hidden bg-bg-shell-surface shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.35)]">
-      {collapsible && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-shell-text-muted hover:text-shell-text transition-colors duration-120 cursor-pointer border-b border-border-shell-surface"
-        >
-          <ChevronDown
-            size={10}
-            strokeWidth={2}
-            className={cn("transition-transform duration-150", expanded && "rotate-180")}
-          />
-          <span className="font-sans text-[11px]">
-            {expanded
-              ? "Collapse"
-              : `${hiddenCount} earlier command${hiddenCount === 1 ? "" : "s"}`}
-          </span>
-        </button>
-      )}
-      {visible.map((act, i) => (
-        <ShellActivityRow
-          key={act.id}
-          activity={act}
-          isLast={i === visible.length - 1}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ActivityFeed({ activities }: { activities: AgentActivity[] }) {
-  const thinkingActs = activities.filter(isThinkingActivity);
-  const toolActs = activities.filter((a) => !isThinkingActivity(a));
-  if (thinkingActs.length === 0 && toolActs.length === 0) return null;
-
-  /** Group consecutive shell activities into runs. */
-  const groups: Array<{ kind: "shell"; items: AgentActivity[] } | { kind: "tool"; item: AgentActivity }> = [];
-  for (const act of toolActs) {
-    if (act.kind === "shell") {
-      const last = groups[groups.length - 1];
-      if (last?.kind === "shell") {
-        last.items.push(act);
-      } else {
-        groups.push({ kind: "shell", items: [act] });
-      }
-    } else {
-      groups.push({ kind: "tool", item: act });
-    }
-  }
-
-  return (
-    <div className="mb-2">
-      {thinkingActs.map((act) => (
-        <ThinkingCard key={act.id} activity={act} />
-      ))}
-      {groups.map((g) =>
-        g.kind === "shell" ? (
-          <ShellActivityGroup key={g.items[0].id} activities={g.items} />
-        ) : (
-          <ToolReasoningRow key={g.item.id} activity={g.item} />
-        ),
-      )}
-    </div>
-  );
-}
-
-// ─── Thinking indicator ───────────────────────────────────────────────────────
-
-function ThinkingIndicator() {
-  return (
-    <div className="mb-4 flex items-center gap-2">
-      <Loader2 size={11} className="text-text-faint animate-spin shrink-0" />
-      <ShimmerText className="text-[12px] font-sans">
-        Thinking...
-      </ShimmerText>
-    </div>
-  );
-}
-
 // ─── Git button ───────────────────────────────────────────────────────────────
 
 function GitButton({
   pr,
   projectPath,
   branch,
+  originUrl,
+  gitInfo,
   onGitAction,
   onCommitSuccess,
   onBranchCreated,
@@ -1033,6 +179,8 @@ function GitButton({
   pr: string | null;
   projectPath: string | null;
   branch: string;
+  originUrl?: string | null;
+  gitInfo: ProjectGitInfo | null;
   onGitAction: () => void;
   onCommitSuccess?: () => void;
   onBranchCreated?: (branch: string) => void;
@@ -1046,10 +194,18 @@ function GitButton({
   const [gitError, setGitError] = useState<string | null>(null);
   const [detectedPrUrl, setDetectedPrUrl] = useState<string | null>(null);
 
-  const DEFAULT_BRANCHES = ["main", "master", "develop", "dev"];
-  const onDefaultBranch = DEFAULT_BRANCHES.includes(branch.trim().toLowerCase());
+  const currentBranch = gitInfo?.branch?.trim() ?? "";
+  const onThreadBranch = Boolean(branch.trim()) && currentBranch === branch.trim();
+  const needsPublish = onThreadBranch && Boolean(gitInfo?.needsPublish);
+  const onDefaultBranch = isDefaultGitBranch(branch);
   const hasPr = onDefaultBranch ? false : (Boolean(pr) || Boolean(detectedPrUrl));
-  const canCreatePr = !hasPr && !onDefaultBranch && Boolean(branch.trim());
+  const canCreatePr = !hasPr && !onDefaultBranch && Boolean(branch.trim()) && !needsPublish;
+  const pushLabel = needsPublish ? "Publish branch" : "Push";
+  const prTitle = !hasPr && onDefaultBranch
+    ? "Create a feature branch first to open a PR"
+    : !hasPr && needsPublish
+      ? "Publish this branch before opening a PR"
+      : undefined;
 
   useEffect(() => {
     if (!projectPath || onDefaultBranch) {
@@ -1114,11 +270,7 @@ function GitButton({
         return;
       }
 
-      const info = await invoke<{
-        originUrl?: string | null;
-        branch?: string | null;
-      }>("get_git_info", { path: projectPath });
-      const url = info?.originUrl;
+      const url = gitInfo?.originUrl ?? originUrl ?? null;
       if (!url) return;
       const m = url.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
       if (!m) return;
@@ -1181,7 +333,7 @@ function GitButton({
             <div className="flex items-center gap-1.5">
               <GitBranch size={10} className="text-text-tertiary shrink-0" />
               <span className="font-sans text-[11px] text-text-primary truncate">
-                {branch || "—"}
+                {currentBranch || branch || "—"}
               </span>
             </div>
           </div>
@@ -1212,17 +364,13 @@ function GitButton({
             className="w-full flex items-center gap-2.5 px-3 py-2 glass-menu-row cursor-pointer text-left outline-none"
           >
             <CloudUpload size={12} className="text-text-faint shrink-0" />
-            <span className="text-[12px] text-text-primary">Push</span>
+            <span className="text-[12px] text-text-primary">{pushLabel}</span>
           </button>
           <div className="border-t border-border-light" role="separator" />
           <button
             onClick={handlePRAction}
             disabled={!hasPr && !canCreatePr}
-            title={
-              !hasPr && onDefaultBranch
-                ? "Create a feature branch first to open a PR"
-                : undefined
-            }
+            title={prTitle}
             className={cn(
               "w-full flex items-center gap-2.5 px-3 py-2 text-left outline-none",
               !hasPr && !canCreatePr
@@ -1556,6 +704,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const accent = statusColor(agent);
   const projectPath = useAppStore((s) => s.projectPath);
+  const projectGitInfo = useProjectGitStore((s) => (projectPath ? s.byProjectPath[projectPath] ?? null : null));
+  const refreshProjectGitInfo = useProjectGitStore((s) => s.refreshProjectGitInfo);
   const appProjectName = useAppStore((s) => s.projectName);
   const clearWorkspace = useAppStore((s) => s.clearWorkspace);
   const view = useViewStore((s) => s.view);
@@ -1585,33 +735,36 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     }
   }, [agent.messages.length, agent.streamingBuffer, agent.pendingApproval]);
 
-  // Fetch git info on mount
   useEffect(() => {
-    if (!projectPath) return;
-    invoke<{
-      branch?: string | null;
-      sha?: string | null;
-      originUrl?: string | null;
-    }>("get_git_info", { path: projectPath })
-      .then((info) => {
-        if (!info?.branch && !info?.sha && !info?.originUrl) return;
-        updateAgentGitInfo(agent.id, {
-          ...(!agent.branch.trim() && info.branch ? { branch: info.branch } : {}),
-          sha: info.sha ?? undefined,
-          originUrl: info.originUrl ?? undefined,
-        });
-        if (!agent.codexThreadId) return;
-        return rpcRequest("thread/metadata/update", {
-          threadId: agent.codexThreadId,
-          gitInfo: {
-            branch: agent.branch || info.branch || undefined,
-            sha: info.sha ?? undefined,
-            originUrl: info.originUrl ?? undefined,
-          },
-        });
-      })
-      .catch(() => {});
-  }, [agent.id, agent.codexThreadId, projectPath, updateAgentGitInfo]);
+    const branch = projectGitInfo?.branch ?? null;
+    const sha = projectGitInfo?.sha ?? null;
+    const originUrl = projectGitInfo?.originUrl ?? null;
+    if (!branch && !sha && !originUrl) return;
+
+    updateAgentGitInfo(agent.id, {
+      ...(!agent.branch.trim() && branch ? { branch } : {}),
+      sha: sha ?? undefined,
+      originUrl: originUrl ?? undefined,
+    });
+    if (!agent.codexThreadId) return;
+
+    void rpcRequest("thread/metadata/update", {
+      threadId: agent.codexThreadId,
+      gitInfo: {
+        branch: agent.branch || branch || undefined,
+        sha: sha ?? undefined,
+        originUrl: originUrl ?? undefined,
+      },
+    }).catch(() => {});
+  }, [
+    agent.id,
+    agent.branch,
+    agent.codexThreadId,
+    projectGitInfo?.branch,
+    projectGitInfo?.sha,
+    projectGitInfo?.originUrl,
+    updateAgentGitInfo,
+  ]);
 
   useEffect(() => {
     if (!projectPath) return;
@@ -2019,10 +1172,8 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
     const { selectedModelId, selectedReasoningEffort } = useSettingsStore.getState();
     if (cwd) {
       try {
-        const info = await invoke<{ branch?: string | null; originUrl?: string | null }>(
-          "get_git_info",
-          { path: cwd },
-        );
+        const { byProjectPath, refreshProjectGitInfo } = useProjectGitStore.getState();
+        const info = byProjectPath[cwd] ?? await refreshProjectGitInfo(cwd);
         branch = info?.branch ?? "";
         originUrl = info?.originUrl ?? undefined;
       } catch {
@@ -2235,7 +1386,14 @@ export function ChatView({ agent, onBack }: ChatViewProps) {
             pr={agent.pr}
             projectPath={projectPath}
             branch={agent.branch}
-            onGitAction={() => {}}
+            originUrl={agent.originUrl}
+            gitInfo={projectGitInfo}
+            onGitAction={() => {
+              if (projectPath) {
+                void refreshProjectGitInfo(projectPath);
+              }
+              refreshGitDiff();
+            }}
             onCommitSuccess={() => setAgentStatus(agent.id, "deployed")}
             onBranchCreated={(b) => updateAgentGitInfo(agent.id, { branch: b })}
           />

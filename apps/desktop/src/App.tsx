@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useProjectWorkspaceBridge } from "./hooks/useProjectWorkspaceBridge";
+import { useProjectGitBridge } from "./hooks/useProjectGitBridge";
 import { THEME_ROOT_ELEMENT_ID } from "./lib/theme-root";
 
 function ThemeClassRoot({ children }: { children: React.ReactNode }) {
@@ -53,6 +54,7 @@ function ThemeClassRoot({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   useProjectWorkspaceBridge();
+  useProjectGitBridge();
   useCodexNotifications();
   useLinearIssueStatusSync();
   const view = useViewStore((s) => s.view);

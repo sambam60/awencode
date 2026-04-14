@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { DiffPanel, type DiffFileInfo } from "@/components/chat/DiffPanel";
 import {
   Archive,
   ArrowUpRight,
@@ -20,17 +21,27 @@ import {
   UserCheck,
   X,
 } from "lucide-react";
+import {
+  MessageRow,
+  ActivityFeed,
+  StreamingMessage,
+  ThinkingIndicator,
+  STREAMING_THINKING_ACTIVITY_ID,
+} from "@/components/chat/chat-message-rendering";
+import { sendChatTurn } from "@/lib/send-chat-turn";
 import { cn } from "@/lib/utils";
 import { linearIssueMeta, type LinearIssue } from "@/lib/linear";
 import { getAgentTimeLabel, getAgentTokenLabel } from "@/lib/agent-metrics";
 import { agentStatusLabel, agentStatusVisual, statusColor } from "@/lib/status";
 import { GlassConfirmDialog } from "@/components/ui/GlassConfirmDialog";
+import { isDefaultGitBranch } from "@/lib/git";
 import { rpcRequest } from "@/lib/rpc-client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/lib/stores/app-store";
+import { useProjectGitStore } from "@/lib/stores/project-git-store";
 import { getModelDisplayName } from "@/lib/stores/settings-store";
 import { useThreadStore } from "@/lib/stores/thread-store";
-import type { Agent, AgentActivity, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
+import type { Agent, AgentPlanStep, PrStatus } from "@/lib/stores/thread-store";
 
 /** Tauri `invoke` often rejects with a plain string from Rust; avoid losing the message. */
 function extractInvokeErrorMessage(error: unknown, fallback: string): string {
@@ -50,8 +61,16 @@ interface DetailPanelProps {
   onOpenChat?: () => void;
 }
 
-const TABS = ["status", "chat", "files"] as const;
+const TABS = ["status", "chat", "diff"] as const;
 type Tab = (typeof TABS)[number];
+
+interface GitDiffData {
+  diff: string;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  files: DiffFileInfo[];
+}
 
 const DETAIL_ACTION_PILL_BASE =
   "flex min-h-9 flex-1 basis-0 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-medium outline-none backdrop-blur-md transition-[background-color,border-color,backdrop-filter,box-shadow] duration-150";
@@ -90,15 +109,9 @@ function currentPrUrl(agent: Agent): string | null {
   return `https://github.com/${repoPath}/pull/${prNumber}`;
 }
 
-const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "dev"]);
-
-function isDefaultBranch(branch: string): boolean {
-  return DEFAULT_BRANCHES.has(branch.trim().toLowerCase());
-}
-
 function comparePrUrl(agent: Agent): string | null {
   const branch = agent.branch.trim();
-  if (!branch || isDefaultBranch(branch)) return null;
+  if (!branch || isDefaultGitBranch(branch)) return null;
   const repoPath = githubRepoPath(agent.originUrl);
   if (!repoPath) return null;
   return `https://github.com/${repoPath}/compare/${encodeURIComponent(branch)}?expand=1`;
@@ -174,85 +187,6 @@ function AgentPlanBlock({ steps }: { steps: AgentPlanStep[] }) {
           </li>
         ))}
         </ul>}
-    </div>
-  );
-}
-
-function isThinkingActivity(activity: AgentActivity): boolean {
-  return activity.kind === "log" && activity.label === "thinking";
-}
-
-function activityTitle(activity: AgentActivity): string {
-  if (isThinkingActivity(activity)) return "Thinking";
-  if (activity.kind === "shell") return activity.shellCommand?.trim() || "Shell";
-  return activity.label;
-}
-
-function activityMeta(activity: AgentActivity): string {
-  if (activity.status === "running") {
-    return "live";
-  }
-  if (activity.durationMs == null) {
-    return activity.kind.replace("_", " ");
-  }
-  return activity.durationMs < 1000
-    ? `${activity.durationMs}ms`
-    : `${(activity.durationMs / 1000).toFixed(1)}s`;
-}
-
-function DetailActivityFeed({
-  activities,
-  streamingBuffer,
-}: {
-  activities: AgentActivity[];
-  streamingBuffer?: string;
-}) {
-  const visibleActivities = activities.slice(-6);
-  const liveDraft = streamingBuffer?.trim() ?? "";
-
-  if (visibleActivities.length === 0 && !liveDraft) return null;
-
-  return (
-    <div className="mb-3 space-y-2">
-      {visibleActivities.map((activity) => {
-        const detail = activity.detail?.trim() ?? "";
-        return (
-          <div
-            key={activity.id}
-            className="rounded-lg border border-border-light bg-bg-card px-3 py-2.5"
-          >
-            <div className="flex items-center gap-2">
-              {activity.status === "running" ? (
-                <Loader2 size={12} strokeWidth={1.9} className="shrink-0 animate-spin text-accent-blue" />
-              ) : (
-                <CircleDot size={12} strokeWidth={1.75} className="shrink-0 text-text-faint" />
-              )}
-              <div className="min-w-0 flex-1 text-[12px] text-text-primary truncate">
-                {activityTitle(activity)}
-              </div>
-              <div className="shrink-0 text-[9.5px] uppercase tracking-widest text-text-faint">
-                {activityMeta(activity)}
-              </div>
-            </div>
-            {detail ? (
-              <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-[11.5px] leading-relaxed text-text-secondary [overflow-wrap:anywhere]">
-                {detail}
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-
-      {liveDraft ? (
-        <div className="rounded-lg border border-border-light bg-bg-secondary/70 px-3 py-2.5">
-          <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-widest text-text-faint">
-            Drafting reply
-          </div>
-          <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-text-primary">
-            {liveDraft}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -465,6 +399,7 @@ function GitOverviewCard({
   onCreateBranch,
   commitDisabled,
   pushDisabled,
+  pushLabel,
   branchDisabled,
   commitTitle,
   pushTitle,
@@ -482,6 +417,7 @@ function GitOverviewCard({
   onCreateBranch: () => void;
   commitDisabled: boolean;
   pushDisabled: boolean;
+  pushLabel: string;
   branchDisabled: boolean;
   commitTitle?: string;
   pushTitle?: string;
@@ -503,7 +439,7 @@ function GitOverviewCard({
           />
           <GitActionRow
             icon={<CloudUpload size={16} strokeWidth={1.8} />}
-            label="Push"
+            label={pushLabel}
             onClick={onPush}
             disabled={pushDisabled}
             title={pushTitle}
@@ -615,11 +551,17 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const [commitMessage, setCommitMessage] = useState("");
   const [newBranchName, setNewBranchName] = useState("");
   const [gitActionState, setGitActionState] = useState<GitThreadActionState | null>(null);
+  const [composeText, setComposeText] = useState("");
+  const [composeSending, setComposeSending] = useState(false);
+  const [gitDiff, setGitDiff] = useState<GitDiffData | null>(null);
+  const [diffVersion, setDiffVersion] = useState(0);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const removeAgent = useThreadStore((s) => s.removeAgent);
   const setAgentStatus = useThreadStore((s) => s.setAgentStatus);
   const updateAgentGitInfo = useThreadStore((s) => s.updateAgentGitInfo);
   const updateAgentPrStatus = useThreadStore((s) => s.updateAgentPrStatus);
   const projectPath = useAppStore((s) => s.projectPath);
+  const refreshProjectGitInfo = useProjectGitStore((s) => s.refreshProjectGitInfo);
   const accent = statusColor(agent);
   const statusVisual = agentStatusVisual(agent);
   const StatusIcon = statusVisual.icon;
@@ -640,7 +582,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   const [prError, setPrError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!projectPath || isDefaultBranch(agent.branch)) {
+    if (!projectPath || isDefaultGitBranch(agent.branch)) {
       setDetectedPrUrl(null);
       return;
     }
@@ -677,13 +619,13 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
     return () => { cancelled = true; };
   }, [projectPath, agent.branch, agent.files]);
 
-  const onDefaultBranch = isDefaultBranch(agent.branch);
+  const onDefaultBranch = isDefaultGitBranch(agent.branch);
   const existingPrUrl = onDefaultBranch ? null : (currentPrUrl(agent) ?? detectedPrUrl);
   const prUrl = existingPrUrl ?? comparePrUrl(agent);
   const prActionLabel = existingPrUrl ? "Open PR" : "Create PR";
 
   useEffect(() => {
-    if (!projectPath || isDefaultBranch(agent.branch)) {
+    if (!projectPath || isDefaultGitBranch(agent.branch)) {
       updateAgentPrStatus(agent.id, null);
       return;
     }
@@ -709,18 +651,55 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
       });
   }, [agent.id, agent.branch, projectPath, updateAgentPrStatus]);
 
+  useEffect(() => {
+    if (!projectPath || tab !== "diff") return;
+    let cancelled = false;
+    invoke<GitDiffData>("get_git_diff", {
+      path: projectPath,
+      branch: agent.branch ? `origin/${agent.branch}` : null,
+    })
+      .then((result) => { if (!cancelled) setGitDiff(result); })
+      .catch(() => { if (!cancelled) setGitDiff(null); });
+    return () => { cancelled = true; };
+  }, [projectPath, agent.branch, tab, diffVersion]);
+
+  useEffect(() => {
+    if (tab !== "chat") return;
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [tab, agent.messages.length, agent.streamingBuffer, agent.activities?.length]);
+
+  const handleComposeSend = async () => {
+    const text = composeText.trim();
+    if (!text || composeSending) return;
+    setComposeText("");
+    setComposeSending(true);
+    try {
+      await sendChatTurn(agent.id, text, []);
+    } finally {
+      setComposeSending(false);
+    }
+  };
+
+  const isThinking =
+    agent.turnInProgress &&
+    !agent.streamingBuffer &&
+    agent.messages[agent.messages.length - 1]?.role === "you";
+
+  const hasInlineThinkingStream =
+    agent.activities?.some(
+      (a) => a.id === STREAMING_THINKING_ACTIVITY_ID && a.status === "running",
+    ) ?? false;
+
   async function refreshGitInfo(branchOverride?: string) {
     if (!projectPath) return;
     try {
       const effectiveBranch = branchOverride ?? agent.branch;
-      const info = await invoke<{
-        branch?: string | null;
-        sha?: string | null;
-        originUrl?: string | null;
-      }>("get_git_info", { path: projectPath });
+      const info = await refreshProjectGitInfo(projectPath);
       updateAgentGitInfo(agent.id, {
-        sha: info.sha ?? undefined,
-        originUrl: info.originUrl ?? undefined,
+        sha: info?.sha ?? undefined,
+        originUrl: info?.originUrl ?? undefined,
       });
       const threadGitState = await invoke<GitThreadActionState>("get_git_thread_action_state", {
         path: projectPath,
@@ -869,18 +848,27 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
   }
 
   const threadBranch = agent.branch.trim();
+  const branchNeedsPublish = Boolean(threadBranch && gitActionState?.branchMatchesThread && !gitActionState?.hasUpstream);
   const commitDisabled = !canRunGitActions || gitBusy !== null || !gitActionState?.canCommit;
   const pushDisabled = !canRunGitActions || gitBusy !== null || !gitActionState?.canPush;
+  const pushLabel = branchNeedsPublish ? "Publish branch" : "Push";
   const branchDisabled = !canRunGitActions || gitBusy !== null;
-  const gitHint = !projectPath
+  const disabledGitHint = !projectPath
     ? "Open a project workspace to use git actions."
     : threadBranch && gitActionState && !gitActionState.branchMatchesThread
       ? `Checkout ${threadBranch} to commit or push changes for this thread.`
-      : gitActionState && !gitActionState.hasThreadStagedChanges && !gitActionState.branchAhead
+      : gitActionState && !gitActionState.hasThreadStagedChanges && !gitActionState.branchAhead && !branchNeedsPublish
         ? "Stage this thread's files to enable commit and push."
         : null;
-  const commitTitle = commitDisabled ? gitHint ?? "No staged changes for this thread" : undefined;
-  const pushTitle = pushDisabled ? gitHint ?? "Nothing to push for this thread" : undefined;
+  const gitHint = disabledGitHint ?? (branchNeedsPublish ? "Publish this branch to create a PR." : null);
+  const commitTitle = commitDisabled ? disabledGitHint ?? "No staged changes for this thread" : undefined;
+  const pushTitle = pushDisabled ? disabledGitHint ?? "Nothing to push for this thread" : undefined;
+  const prDisabled = !prUrl || gitBusy !== null || branchNeedsPublish;
+  const prTitle = branchNeedsPublish
+    ? "Publish this branch before opening a PR."
+    : !existingPrUrl && onDefaultBranch
+      ? "Create a feature branch first to open a PR"
+      : undefined;
 
   return (
     <>
@@ -1055,7 +1043,14 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
       {/* Tab content — footer overlays the scroll area so backdrop blur samples real content */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-auto px-6 py-6 pb-28">
+        <div className={cn(
+          "min-h-0 flex-1 flex flex-col",
+          tab === "chat"
+            ? "overflow-hidden px-6 pt-4 pb-2"
+            : tab === "diff"
+              ? "overflow-hidden"
+              : "overflow-auto px-6 py-6 pb-28",
+        )}>
         {tab === "status" && (
           <div className="flex flex-col gap-5">
             <AgentPlanBlock steps={agent.planSteps ?? []} />
@@ -1070,12 +1065,8 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               existingPrUrl={existingPrUrl}
               prActionLabel={prActionLabel}
               prError={prError}
-              prDisabled={!prUrl || gitBusy !== null}
-              prTitle={
-                !existingPrUrl && onDefaultBranch
-                  ? "Create a feature branch first to open a PR"
-                  : undefined
-              }
+              prDisabled={prDisabled}
+              prTitle={prTitle}
               onCommit={() => {
                 setGitError(null);
                 setGitDialog("commit");
@@ -1092,6 +1083,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
               }}
               commitDisabled={commitDisabled}
               pushDisabled={pushDisabled}
+              pushLabel={pushLabel}
               branchDisabled={branchDisabled}
               commitTitle={commitTitle}
               pushTitle={pushTitle}
@@ -1111,87 +1103,121 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
 
         {tab === "chat" && (
           <div className="flex flex-col h-full min-h-0">
-            <div className="flex-1 flex flex-col gap-3 min-h-0 overflow-auto mb-3">
-              <DetailActivityFeed
-                activities={agent.activities ?? []}
-                streamingBuffer={agent.streamingBuffer}
-              />
-
+            {/* Scrollable message area */}
+            <div
+              ref={chatScrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-0 pb-3"
+            >
               {agent.messages.length === 0 &&
               !(agent.streamingBuffer?.trim()) &&
               (agent.activities?.length ?? 0) === 0 ? (
-                <div className="text-sm text-text-faint italic">
-                  No messages yet.
+                <div className="flex items-center justify-center h-32">
+                  <span className="font-sans text-[12px] text-text-faint italic">
+                    No messages yet.
+                  </span>
                 </div>
               ) : (
-                agent.messages.map((m, i) =>
-                  m.role === "you" ? (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[95%] px-2.5 py-2 rounded-[10px] bg-bg-user-message border border-border-user-message text-text-primary text-[13px] leading-relaxed whitespace-pre-wrap">
-                        {m.content}
-                      </div>
-                    </div>
+                <>
+                  {agent.messages.length > 0 &&
+                  agent.messages[agent.messages.length - 1]?.role === "agent" ? (
+                    <>
+                      {agent.messages.slice(0, -1).map((msg, i) => (
+                        <MessageRow key={i} message={msg} messageIndex={i} />
+                      ))}
+                      {(agent.activities?.length ?? 0) > 0 && (
+                        <ActivityFeed activities={agent.activities ?? []} />
+                      )}
+                      <MessageRow
+                        message={agent.messages[agent.messages.length - 1]!}
+                        messageIndex={agent.messages.length - 1}
+                      />
+                    </>
                   ) : (
-                    <div
-                      key={i}
-                      className="px-3 py-2.5 bg-bg-secondary/80 rounded-lg"
-                    >
-                      <div className="font-mono text-[9px] font-semibold uppercase tracking-label-wide text-text-faint mb-1.5">
-                        agent
-                      </div>
-                      <div className="text-[13px] text-text-primary leading-relaxed whitespace-pre-wrap">
-                        {m.content}
-                      </div>
-                    </div>
-                  ),
-                )
+                    <>
+                      {agent.messages.map((msg, i) => (
+                        <MessageRow key={i} message={msg} messageIndex={i} />
+                      ))}
+                      {(agent.activities?.length ?? 0) > 0 && (
+                        <ActivityFeed activities={agent.activities ?? []} />
+                      )}
+                    </>
+                  )}
+
+                  {isThinking && !hasInlineThinkingStream && <ThinkingIndicator />}
+
+                  {agent.streamingBuffer && (
+                    <StreamingMessage buffer={agent.streamingBuffer} />
+                  )}
+                </>
               )}
             </div>
 
+            {/* Open full view link */}
             {onOpenChat && (
               <button
                 type="button"
                 onClick={onOpenChat}
-                className="font-sans text-[12.5px] text-[var(--text-links)] flex items-center gap-0.5 bg-transparent border-0 cursor-pointer p-0 py-2 text-left shrink-0 transition-[filter] duration-150 hover:brightness-[0.88] dark:hover:brightness-[0.92]"
+                className="font-sans text-[12px] text-[var(--text-links)] flex items-center gap-0.5 bg-transparent border-0 cursor-pointer p-0 pb-2 text-left shrink-0 transition-[filter] duration-150 hover:brightness-[0.88] dark:hover:brightness-[0.92]"
               >
                 <span>Open full view</span>
                 <OpenFullViewArrow />
               </button>
             )}
 
-            <div className="flex items-center gap-2 px-3 py-2.5 bg-bg-card border border-border rounded shrink-0">
-              <input
-                placeholder="Quick message..."
-                className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm"
+            {/* Compose */}
+            <div className="shrink-0 relative">
+              <textarea
+                value={composeText}
+                onChange={(e) => setComposeText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleComposeSend();
+                  }
+                }}
+                placeholder="Message…"
+                rows={1}
+                disabled={composeSending}
+                className="w-full resize-none rounded-lg border border-border-default bg-bg-input px-3 py-2.5 pr-10 text-[13px] text-text-primary placeholder:text-text-faint outline-none focus:border-border-focus transition-[border-color] duration-120 disabled:opacity-60 leading-relaxed"
+                style={{ minHeight: 40, maxHeight: 120, overflowY: "auto" }}
               />
-              <span className="kbd-badge cursor-pointer">↵</span>
+              <button
+                type="button"
+                onClick={() => void handleComposeSend()}
+                disabled={!composeText.trim() || composeSending}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-md text-text-faint hover:text-text-primary disabled:opacity-40 transition-colors duration-120 cursor-pointer disabled:cursor-not-allowed"
+                aria-label="Send message"
+              >
+                {composeSending ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                    <path d="M6.5 11V2M2 6.5L6.5 2L11 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </button>
             </div>
           </div>
         )}
 
-        {tab === "files" && (
-          <div className="flex flex-col gap-1">
-            {agent.files.length === 0 ? (
-              <div className="text-sm text-text-faint italic">
-                No files changed.
-              </div>
-            ) : (
-              agent.files.map((f, i) => (
-                <div
-                  key={i}
-                  className="font-mono text-[11.5px] text-text-secondary px-2.5 py-[7px] bg-bg-card border border-border-light rounded-[5px]"
-                >
-                  {f}
-                </div>
-              ))
-            )}
-          </div>
+        {tab === "diff" && (
+          <DiffPanel
+            diff={gitDiff?.diff ?? ""}
+            files={gitDiff?.files ?? []}
+            projectPath={projectPath}
+            open={true}
+            onRefresh={() => setDiffVersion((v) => v + 1)}
+            embedded
+          />
         )}
         </div>
 
-        {/* Blur sits above scrolling content (not below it in the flex column). */}
+        {/* Blur sits above scrolling content (not below it in the flex column). Hidden on chat/diff tabs. */}
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36",
+            (tab === "chat" || tab === "diff") && "hidden",
+          )}
           aria-hidden="true"
         >
           <div className="absolute inset-x-0 bottom-0 h-32">
@@ -1234,7 +1260,7 @@ export function DetailPanel({ agent, onClose, onOpenChat }: DetailPanelProps) {
           </div>
         </div>
 
-        <div className="absolute inset-x-0 bottom-0 z-20 space-y-2 px-6 pb-4 pt-2">
+        <div className={cn("absolute inset-x-0 bottom-0 z-20 space-y-2 px-6 pb-4 pt-2", tab === "chat" && "hidden")}>
           {actionError && (
             <p className="text-[11px] text-accent-red leading-snug">{actionError}</p>
           )}

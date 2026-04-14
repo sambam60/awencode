@@ -42,9 +42,10 @@ export interface DiffPanelProps {
   diff: string;
   files: DiffFileInfo[];
   projectPath: string | null;
-  width: number;
+  width?: number;
   open: boolean;
   onRefresh: () => void;
+  embedded?: boolean;
 }
 
 function fileBasename(path: string) {
@@ -259,6 +260,7 @@ export const DiffPanel = memo(function DiffPanel({
   width,
   open,
   onRefresh,
+  embedded = false,
 }: DiffPanelProps) {
   const isDark = useIsDarkMode();
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
@@ -334,8 +336,11 @@ export const DiffPanel = memo(function DiffPanel({
 
   return (
     <div
-      className="h-full flex flex-col select-none border-l border-border-default"
-      style={{ width, background: "var(--bg-secondary)" }}
+      className={cn(
+        "flex flex-col select-none",
+        embedded ? "w-full" : "h-full border-l border-border-default",
+      )}
+      style={embedded ? undefined : { width, background: "var(--bg-secondary)" }}
     >
       {/* Header */}
       <div className="h-[26px] shrink-0 flex items-center px-2 group/header border-b border-border-light">
@@ -386,7 +391,7 @@ export const DiffPanel = memo(function DiffPanel({
       </div>
 
       {/* File list + diffs */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+      <div className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden", embedded && "pb-24")}>
         {files.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <span className="text-[12px] text-text-faint">No changes</span>
